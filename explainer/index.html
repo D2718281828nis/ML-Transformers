@@ -35,7 +35,11 @@
     <span class="arrow">·</span>
     <a href="#train">training</a>
     <span class="arrow">→</span>
-    <a href="#wte">W<sub>E</sub></a><a href="#wpe">W<sub>P</sub></a><a href="#sum">e + p</a>
+    <a href="#wte">W<sub>E</sub></a>
+    <span class="arrow">·</span>
+    <a href="#emb-init">W<sub>E</sub> training</a>
+    <span class="arrow">→</span>
+    <a href="#wpe">W<sub>P</sub></a><a href="#sum">e + p</a>
     <span class="arrow">→</span>
     <a href="#ln">LayerNorm</a><a href="#qkv">Q K V</a><a href="#scores">q·k</a><a href="#mask">÷√d · mask</a><a href="#softmax">softmax</a><a href="#weighted">Σ a·v</a><a href="#heads">12 heads</a><a href="#proj">W<sub>O</sub> + x</a>
   </nav>
@@ -212,7 +216,8 @@
     <h3><span class="step-num">2.1</span> Read one row of the embedding matrix per token <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L819">code</a></h3>
     <p>All embeddings live in one matrix <span class="tex" data-tex="W_E">W_E</span> with one row per vocabulary entry:
       50,257 rows × 768 columns ≈ <b>38.6 million numbers</b>, almost a third of GPT-2 small's 124 M parameters. Embedding a token is nothing more than
-      <b>reading row number ID</b>. Mathematically it is a one-hot vector times the matrix, but nobody computes it that way.</p>
+      <b>reading row number ID</b>. Mathematically it is a one-hot vector times the matrix, but nobody computes it that way.
+      Where these numbers come from is shown in the <a href="#s-emb-training">interlude on training W<sub>E</sub></a> after this section.</p>
     <div class="formula"><span class="tex" data-tex="e_i = W_E[\,\mathrm{id}_i\,] = \mathrm{onehot}(\mathrm{id}_i)\,W_E \;\in \mathbb{R}^{768},\qquad W_E \in \mathbb{R}^{50257\times 768}">e_i = W_E[id_i]</span></div>
     <div class="viz" id="viz-wte"></div>
   </article>
@@ -225,6 +230,91 @@
     <div class="formula"><span class="tex" data-tex="\cos(e_i, e_j) = \frac{e_i \cdot e_j}{\lVert e_i\rVert\,\lVert e_j\rVert}">cos(e_i, e_j)</span></div>
     <div class="viz" id="viz-sim"></div>
     <p class="note">Identical tokens get identical vectors wherever they appear. At this point the model has <b>no idea of word order</b>.</p>
+  </article>
+</section>
+
+<!-- ───────────────────────── Interlude: the embedding matrix ───────────────────────── -->
+<section class="stage interlude" id="s-emb-training">
+  <header class="stage-head">
+    <span class="stage-num">E</span>
+    <div>
+      <h2>Interlude: how the embedding matrix is created and trained</h2>
+      <p>Where do the 38.6 million numbers of <span class="tex" data-tex="W_E">W_E</span> come from? Nobody chooses them.
+        The matrix is created full of random numbers, and training slowly turns them into useful vectors. Here is that process,
+        first for GPT-2's real matrix and then on a tiny model you can train yourself.</p>
+    </div>
+  </header>
+
+  <article class="step" id="emb-init">
+    <h3><span class="step-num">E.1</span> Creating the matrix: a table of random numbers <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L480-L481">code</a></h3>
+    <p>The size is fixed before training starts. The number of rows is the vocabulary size from the tokenizer (50,257). The number of
+      columns is the model width, a design choice: 768 for GPT-2 small, and 1,024, 1,280 and 1,600 for the medium, large and XL models.
+      Creating <span class="tex" data-tex="W_E">W_E</span> means allocating 50,257 × 768 numbers and filling them with small
+      <b>random values</b> from a normal distribution with mean 0 and standard deviation 0.02. Random, so that every token starts with a
+      different row: if all rows were equal, every token would look the same to the network. Small, so that the untrained model starts by
+      guessing almost uniformly. At this point the rows mean nothing at all.</p>
+    <div class="formula"><span class="tex" data-tex="W_E[t, d] \sim \mathcal{N}(0,\, 0.02^2)\quad\text{for every token } t \text{ and dimension } d">W_E[t, d] ~ N(0, 0.02²)</span></div>
+    <div class="viz" id="viz-emb-init"></div>
+  </article>
+
+  <article class="step" id="emb-signal">
+    <h3><span class="step-num">E.2</span> The training signal: predict the next token <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L979-L984">code</a></h3>
+    <p>Nobody tells the model what a token means. <span class="tex" data-tex="W_E">W_E</span> is trained together with the other
+      parameters of the model (124 million in total) on a single task: <b>given the tokens so far, predict the next one</b>. GPT-2 practised
+      this on about 40 GB of web text (WebText). At every position the model gives a probability to each of the 50,257 tokens, and the
+      <em>loss</em> is −ln of the probability it gave to the token that really came next. Backpropagation then computes, for every number in
+      the model, which way a tiny change would lower the loss (its <em>gradient</em>), and the optimizer nudges every number a little in
+      that direction. The rows of <span class="tex" data-tex="W_E">W_E</span> are simply more numbers being nudged.</p>
+    <p><b>GPT-2 uses <span class="tex" data-tex="W_E">W_E</span> twice.</b> At the input it looks up one row per token (step 2.1).
+      At the output, after the 12 blocks and a final LayerNorm, it takes the dot product of the last vector <i>h</i> with every row of
+      <span class="tex" data-tex="W_E">W_E</span> to score all 50,257 candidates for the next token. This is called <em>weight tying</em>:
+      GPT-2 has no separate output matrix. So every training step changes <span class="tex" data-tex="W_E">W_E</span> in two ways.
+      The row of the correct next token is pulled toward <i>h</i> and the rows of wrong tokens that got probability are pushed away,
+      while the rows of the input tokens are adjusted so that <i>h</i> points better at the right answer.</p>
+    <div class="flow">
+      <span class="node">token ID</span><span class="op">→</span>
+      <span class="node">row of W<sub>E</sub></span><span class="op">→</span>
+      <span class="node">+ position, 12 blocks, LayerNorm</span><span class="op">→</span>
+      <span class="node"><i>h</i></span><span class="op">→</span>
+      <span class="node accent"><i>h</i> · W<sub>E</sub><sup>⊤</sup>: 50,257 scores</span><span class="op">→</span>
+      <span class="node">softmax → p(next)</span><span class="op">→</span>
+      <span class="node">loss = −ln p(correct)</span>
+      <span class="back">← the gradient flows back through every step into both uses of W<sub>E</sub></span>
+    </div>
+    <div class="formula"><span class="tex" data-tex="z = h\,W_E^{\top},\quad p = \mathrm{softmax}(z),\quad L = -\ln p_{\text{next}},\qquad \frac{\partial L}{\partial W_E[w]}\Big|_{\text{output}} = (p_w - [w = \text{next}])\,h,\qquad W_E \leftarrow W_E - \eta\,\frac{\partial L}{\partial W_E}">L = −ln p_next, W_E ← W_E − η ∂L/∂W_E</span></div>
+  </article>
+
+  <article class="step" id="emb-train">
+    <h3><span class="step-num">E.3</span> Train a tiny one yourself</h3>
+    <p>Here is the same recipe at toy size. Whole words are the tokens, the vocabulary has about a dozen words, and every row of the
+      embedding matrix <i>E</i> has just <b>2 numbers</b>, so it can be drawn as a point. Like GPT-2, the model uses <i>E</i> twice: to look
+      up the current word, and to score every candidate for the next word. In between sits one 2 × 2 matrix <i>A</i> that stands in for
+      GPT-2's 12 blocks. It starts from random numbers with std 0.02, like GPT-2, and learns with the same loop: predict the next word for
+      every example, measure the loss, follow the gradient (with the Adam optimizer). Press Train and watch the rows move.</p>
+    <div class="formula"><span class="tex" data-tex="e = E[\text{word}],\quad h = A\,e,\quad z_w = E[w]\cdot h + b_w,\quad p = \mathrm{softmax}(z),\quad L = -\ln p_{\text{next}}">e = E[word], h = A e, z_w = E[w]·h + b_w</span></div>
+    <div class="viz" id="viz-emb-train"></div>
+  </article>
+
+  <article class="step" id="emb-step">
+    <h3><span class="step-num">E.4</span> One training example up close</h3>
+    <p>Pick one example: a word and the word that follows it in the text. The model looks up the word's row, turns it into <i>h</i>, and
+      scores every word by comparing <i>h</i> with that word's row, so rows that point the same way as <i>h</i> get high scores.
+      The arrows show how this single example pushes the rows. The correct next word is pulled toward <i>h</i>, wrong words that got
+      probability are pushed away from it, and the input row moves so that <i>h</i> points better at the right answer.
+      A training step adds up these pushes over all examples.</p>
+    <div class="viz" id="viz-emb-step"></div>
+  </article>
+
+  <article class="step" id="emb-near">
+    <h3><span class="step-num">E.5</span> Why similar words end up close</h3>
+    <p>Words that appear in the same contexts receive the same pushes, so their rows move together. In the first example text,
+      <code>cat</code> and <code>dog</code> occur in exactly the same places, so training has no reason to tell them apart, and their rows
+      end up on top of each other. Add a sentence like <code>the cat ate the fish .</code> and train again: now the two words are no longer
+      interchangeable and their rows separate (how far depends on the random start, since 2 numbers leave little room).
+      GPT-2's <span class="tex" data-tex="W_E">W_E</span> went through the same process with 768 numbers per row and billions of examples.
+      That is why related tokens have similar rows (2.2), and why single dimensions have no readable meaning: nothing in training asks any
+      one dimension to mean something.</p>
+    <div class="viz" id="viz-emb-near"></div>
   </article>
 </section>
 

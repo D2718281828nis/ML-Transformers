@@ -3,6 +3,7 @@ import { RemoteSafetensors, loadStaticWeights, EmbeddingRows, POSITION_ROWS } fr
 import { CFG, forward, headProfile, cosine, sinusoidal, dot } from "./model.js";
 import { T } from "./i18n.js";
 import { initTraining, renderTraining } from "./training.js";
+import { initEmbeddingTraining, renderEmbeddingTraining, renderEmbInit } from "./embedding.js";
 import {
   h, s, fmt, pct, int, tokChip, tokText, tokTip, tokPlain, heatRows, heatImage, matrixGrid, cellSize, bars, lineChart,
   attentionLines, legend, seqLegend, robustScale, divergingRGB, sequentialRGB, showTip, hideTip, resetPalette,
@@ -72,6 +73,7 @@ async function main() {
     timer = setTimeout(() => update(input.value), 160);
   });
   initTraining(tokenizer);
+  initEmbeddingTraining();
   update(input.value);
   loadWeights();
 }
@@ -178,6 +180,7 @@ function renderAll() {
   if (!state.enc) return;
   renderTokenization();
   renderTraining(state.enc, true);
+  renderEmbeddingTraining();
   renderModelSections();
 }
 
@@ -502,6 +505,7 @@ function renderEmbedding() {
   const wte = $("viz-wte");
   const sim = $("viz-sim");
   const { res } = state;
+  renderEmbInit({ res, tokens: state.tokens, focus: state.focus, placeholder });
   if (!res) return placeholder(wte), placeholder(sim);
   const toks = state.tokens;
   const n = toks.length;
