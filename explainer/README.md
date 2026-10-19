@@ -1,16 +1,17 @@
 # Embedding & Attention Explainer
 
-An interactive page that follows a sentence through the first part of GPT-2 (small): tokenization (pre-tokenization regex, byte-pair-encoding merges, token IDs), token embeddings, positional encoding, and the first self-attention layer (LayerNorm, Q/K/V, multi-head split, scores, scaling, causal mask, softmax, weighted values, output projection, residual).
+An interactive page that follows a sentence through the first part of GPT-2 (small): tokenization (pre-tokenization regex, byte-pair-encoding merges, token IDs and `vocab.json`), an interlude on how the tokenizer itself is trained (BPE training round by round on an editable text, why `merges.txt` is the output, GPT-2's rules cut at N), token embeddings, positional encoding, and the first self-attention layer (LayerNorm, Q/K/V, multi-head split, scores, scaling, causal mask, softmax, weighted values, output projection, residual).
 
 It zooms into the part of [Transformer Explainer](https://poloclub.github.io/transformer-explainer/) that the original page covers only briefly.
 
-**Live:** https://d2718281828nis.github.io/ML-Transformers/
+**Live:** https://d2718281828nis.github.io/ML-Transformers/ · in Russian: https://d2718281828nis.github.io/ML-Transformers/ru/
 
 ## How it works
 
 - **Real tokenizer.** `js/tokenizer.js` is a port of `src/transformers/models/gpt2/tokenization_gpt2.py` that also records every BPE merge step. `assets/gpt2/vocab.json` and `merges.txt` come from [`openai-community/gpt2`](https://huggingface.co/openai-community/gpt2) (MIT).
 - **Real weights, fetched in pieces.** `js/weights.js` reads the safetensors header of `model.safetensors` (548 MB) on the Hugging Face Hub. It then downloads only what the page needs with HTTP Range requests: one 3 KB embedding row per token, the first 128 position rows and the layer-0 attention weights. That is about 10 MB, kept in the browser's Cache Storage for later visits. The model revision is pinned.
-- **Plain math, no framework.** `js/model.js` computes the embeddings and the attention sub-layer and keeps every intermediate result for the visualizations. `js/viz.js` holds the drawing helpers, and `js/app.js` renders each section. There is no build step. Formulas use KaTeX from a CDN.
+- **Two languages.** `index.html` (English) and `ru/index.html` (Russian) hold the page text. Everything the scripts generate (labels, tooltips, messages) comes from `js/i18n.js`, which picks the language from `<html lang>`. A `?text=` URL parameter sets the starting sentence, and the EN/RU switch keeps it.
+- **Plain math, no framework.** `js/model.js` computes the embeddings and the attention sub-layer and keeps every intermediate result for the visualizations. `js/viz.js` holds the drawing helpers, `js/app.js` renders each section, and `js/training.js` runs the tokenizer-training interlude. There is no build step. Formulas use KaTeX from a CDN.
 
 ## Run locally
 

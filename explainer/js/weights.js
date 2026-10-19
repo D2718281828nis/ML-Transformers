@@ -46,7 +46,8 @@ export class RemoteSafetensors {
   }
 
   #cacheKey(key) {
-    return new Request(new URL(`./__gpt2-cache/${encodeURIComponent(key)}`, location.href).href);
+    // Relative to this module (the site root's js/), so every page of the site shares one cache.
+    return new Request(new URL(`../__gpt2-cache/${encodeURIComponent(key)}`, import.meta.url).href);
   }
 
   async #fetchRange(start, endExclusive, track = true) {

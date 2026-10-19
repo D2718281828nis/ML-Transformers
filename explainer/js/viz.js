@@ -1,5 +1,7 @@
 // DOM + drawing helpers shared by the sections in app.js.
 
+import { T } from "./i18n.js";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 export function h(tag, props, ...children) {
@@ -53,7 +55,7 @@ export function pct(p, digits = 1) {
   return `${(p * 100).toFixed(digits)}%`;
 }
 
-export const int = (n) => n.toLocaleString("en-US");
+export const int = (n) => T.int(n);
 
 // ───────────── colors ─────────────
 let palette = null;
@@ -103,7 +105,7 @@ export function legend(scale, { digits = 2, label = "" } = {}) {
   return h("span", { class: "legend" }, label ? `${label} ` : null, fmt(-scale, digits), bar, `+${fmt(scale, digits)}`);
 }
 
-export function seqLegend(label = "attention weight") {
+export function seqLegend(label = T.attnWeight) {
   const c = colors();
   const bar = h("span", { class: "bar", style: { background: `linear-gradient(to right, ${rgbCss(c.lo)}, ${rgbCss(c.hi)})` } });
   return h("span", { class: "legend" }, `${label} 0`, bar, "1");
@@ -152,7 +154,7 @@ export function tokChip(tok, { showId = false, extra = null } = {}) {
       class: `tok${tok.partial ? " partial" : ""}`,
       "data-tok": tok.index,
       style: `--tc: var(--tok${tok.index % 10})`,
-      title: tok.partial ? "Part of a multi-byte UTF-8 character (shown as hex bytes)" : null,
+      title: tok.partial ? T.partialTitle : null,
     },
     h("span", null, tokText(tok.text)),
     showId ? h("span", { class: "tid" }, tok.id) : null,
@@ -221,7 +223,7 @@ export function heatRows(rows, {
   overlay.append(hair);
   wrap.append(overlay);
   if (axis && rows.length) {
-    wrap.append(h("div", { class: "heat-axis", style: { gridRow: rows.length + 1 } }, h("span", null, "dim 0"), h("span", null, `dim ${len - 1}`)));
+    wrap.append(h("div", { class: "heat-axis", style: { gridRow: rows.length + 1 } }, h("span", null, T.dim(0)), h("span", null, T.dim(len - 1))));
   }
   return wrap;
 }
@@ -320,34 +322,51 @@ export function bars(values, { scale = robustScale([values], 1), height = 54, co
   return svg;
 }
 
-// ───────────── line chart: a few series over positions ─────────────
+// ───────────── line chart: a few series over an index (positions, rounds, …) ─────────────
 const SERIES_COLORS = ["#6366f1", "#14b8a6", "#f59e0b", "#ec4899"];
 
-export function lineChart(series, { height = 160, mark = 0 } = {}) {
+export function lineChart(series, {
+  height = 160,
+  mark = 0, // shade indices 0..mark-1
+  markLabel = T.yourSentence,
+  positive = false, // y axis 0..max instead of −max..max
+  xLabel = T.pos, // (i) => axis label at both ends
+  tipLabel = T.position, // (i) => first tooltip line
+  digits = 3,
+  points = false,
+  highlight = -1, // index to ring on every series
+  ticks = false, // label every index (for unevenly spaced x values)
+} = {}) {
   const N = series[0].values.length;
   const W = 600;
   const H = height;
-  const [padL, padR, padT, padB] = [38, 8, 8, 18];
+  const [padL, padR, padT, padB] = [44, 10, 8, 18];
   let max = 0;
   for (const ser of series) for (const v of ser.values) max = Math.max(max, Math.abs(v));
   max ||= 1;
-  const x = (i) => padL + (i / (N - 1)) * (W - padL - padR);
-  const y = (v) => padT + (1 - (v + max) / (2 * max)) * (H - padT - padB);
-  const svg = s("svg", { class: "line-svg", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Values of ${series.map((x) => x.label).join(", ")} across positions` });
-  if (mark) svg.append(s("rect", { class: "mark", x: x(0), y: padT, width: Math.max(3, x(mark - 1) - x(0)), height: H - padT - padB }));
+  const x = (i) => padL + (N > 1 ? i / (N - 1) : 0.5) * (W - padL - padR);
+  const y = (v) => padT + (positive ? 1 - v / max : 1 - (v + max) / (2 * max)) * (H - padT - padB);
+  const yfmt = (v) => (digits ? fmt(v, 2) : int(Math.round(v)));
+  const svg = s("svg", { class: "line-svg", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": T.chartAria(series.map((x) => x.label).join(", ")) });
+  if (mark) svg.append(s("rect", { class: "mark", x: x(0) - (mark === 1 ? 2 : 0), y: padT, width: Math.max(4, x(mark - 1) - x(0)), height: H - padT - padB }));
   svg.append(
     s("line", { class: "zero", x1: padL, x2: W - padR, y1: y(0), y2: y(0) }),
-    s("text", { class: "ax", x: padL - 5, y: y(max) + 7, "text-anchor": "end" }, fmt(max, 2)),
+    s("text", { class: "ax", x: padL - 5, y: y(max) + 7, "text-anchor": "end" }, yfmt(max)),
     s("text", { class: "ax", x: padL - 5, y: y(0) + 3, "text-anchor": "end" }, "0"),
-    s("text", { class: "ax", x: padL - 5, y: y(-max), "text-anchor": "end" }, fmt(-max, 2)),
-    s("text", { class: "ax", x: x(0), y: H - 3 }, "pos 0"),
-    s("text", { class: "ax", x: x(N - 1), y: H - 3, "text-anchor": "end" }, `pos ${N - 1}`),
+    positive ? null : s("text", { class: "ax", x: padL - 5, y: y(-max), "text-anchor": "end" }, yfmt(-max)),
+    ...(ticks
+      ? Array.from({ length: N }, (_, i) => s("text", { class: "ax", x: x(i), y: H - 3, "text-anchor": i === 0 ? "start" : i === N - 1 ? "end" : "middle" }, xLabel(i)))
+      : [s("text", { class: "ax", x: x(0), y: H - 3 }, xLabel(0)), s("text", { class: "ax", x: x(N - 1), y: H - 3, "text-anchor": "end" }, xLabel(N - 1))]),
   );
-  series.forEach((ser, k) =>
+  series.forEach((ser, k) => {
+    const color = SERIES_COLORS[k % SERIES_COLORS.length];
     svg.append(s("polyline", {
       points: Array.from(ser.values, (v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" "),
-      stroke: SERIES_COLORS[k % SERIES_COLORS.length], fill: "none", "stroke-width": 1.8, "stroke-linejoin": "round",
-    })));
+      stroke: color, fill: "none", "stroke-width": 1.8, "stroke-linejoin": "round",
+    }));
+    if (points) for (let i = 0; i < N; i++) svg.append(s("circle", { cx: x(i), cy: y(ser.values[i]), r: 3, fill: color }));
+    if (highlight >= 0) svg.append(s("circle", { class: "ring", cx: x(highlight), cy: y(ser.values[highlight]), r: 7, stroke: color }));
+  });
   const hair = s("line", { class: "hair", y1: padT, y2: H - padB, visibility: "hidden" });
   svg.append(hair);
   svg.addEventListener("pointermove", (ev) => {
@@ -357,7 +376,7 @@ export function lineChart(series, { height = 160, mark = 0 } = {}) {
     hair.setAttribute("x1", x(i));
     hair.setAttribute("x2", x(i));
     hair.setAttribute("visibility", "visible");
-    showTip(`position ${i}<br>` + series.map((ser, k) => `<span style="color:${SERIES_COLORS[k]}">●</span> ${ser.label}: <b>${fmt(ser.values[i], 3)}</b>`).join("<br>"), ev);
+    showTip(`${tipLabel(i)}<br>` + series.map((ser, k) => `<span style="color:${SERIES_COLORS[k]}">●</span> ${ser.label}: <b>${yfmt(ser.values[i])}</b>`).join("<br>"), ev);
   });
   svg.addEventListener("pointerleave", () => {
     hair.setAttribute("visibility", "hidden");
@@ -366,8 +385,53 @@ export function lineChart(series, { height = 160, mark = 0 } = {}) {
   return h("div", null,
     h("div", { class: "line-legend" },
       series.map((ser, k) => h("span", null, h("i", { style: { background: SERIES_COLORS[k % SERIES_COLORS.length] } }), ser.label)),
-      mark ? h("span", null, h("i", { class: "mark-swatch" }), "your sentence") : null),
+      mark ? h("span", null, h("i", { class: "mark-swatch" }), markLabel) : null),
     svg);
+}
+
+// ───────────── small shared UI pieces ─────────────
+// replaceChildren() that skips null/false children (replaceChildren would print "null").
+export const fill = (el, ...children) => el.replaceChildren(...children.flat(Infinity).filter((c) => c != null && c !== false));
+export const mono = (text) => h("span", { class: "mono" }, text);
+
+// Play/pause that advances a step counter every 750 ms.
+export function player() {
+  let timer = null;
+  return {
+    get playing() {
+      return timer !== null;
+    },
+    stop() {
+      clearInterval(timer);
+      timer = null;
+    },
+    toggle(get, set, K, render) {
+      if (timer) {
+        this.stop();
+        return render();
+      }
+      if (get() >= K) set(0);
+      timer = setInterval(() => {
+        if (get() >= K) this.stop();
+        else set(get() + 1);
+        render();
+      }, 750);
+      render();
+    },
+  };
+}
+
+// ⏮ ◀ ▶/❚❚ ▶ ⏭ + slider for stepping through 0..K.
+export function stepper({ k, K, go, playing, onPlay }) {
+  const slider = h("input", { type: "range", min: 0, max: K, value: k, step: 1, "aria-label": T.aStep, disabled: K === 0 });
+  slider.addEventListener("input", () => go(Number(slider.value)));
+  return h("div", { class: "bpe-controls" },
+    h("button", { class: "btn", type: "button", onclick: () => go(0), disabled: k === 0, "aria-label": T.aFirst }, "⏮"),
+    h("button", { class: "btn", type: "button", onclick: () => go(k - 1), disabled: k === 0, "aria-label": T.aPrev }, "◀"),
+    h("button", { class: "btn primary", type: "button", onclick: onPlay, disabled: K === 0 }, playing ? T.pause : T.play),
+    h("button", { class: "btn", type: "button", onclick: () => go(k + 1), disabled: k === K, "aria-label": T.aNext }, "▶"),
+    h("button", { class: "btn", type: "button", onclick: () => go(K), disabled: k === K, "aria-label": T.aLast }, "⏭"),
+    slider);
 }
 
 // ───────────── attention lines (query tokens on the left, keys on the right) ─────────────
@@ -379,10 +443,10 @@ export function attentionLines(tokens, probs, focus, { onFocus = null } = {}) {
   const H = top + n * rowH + 6;
   const lx = 150;
   const rx = W - 150;
-  const svg = s("svg", { class: "lines-svg", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Attention lines from each query token to the key tokens" });
+  const svg = s("svg", { class: "lines-svg", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": T.linesAria });
   svg.append(
-    s("text", { class: "hdr", x: lx - 6, y: 10, "text-anchor": "end" }, "query (from)"),
-    s("text", { class: "hdr", x: rx + 6, y: 10 }, "key (to)"),
+    s("text", { class: "hdr", x: lx - 6, y: 10, "text-anchor": "end" }, T.linesFrom),
+    s("text", { class: "hdr", x: rx + 6, y: 10 }, T.linesTo),
   );
   const y = (i) => top + i * rowH + rowH / 2;
   const paths = s("g");

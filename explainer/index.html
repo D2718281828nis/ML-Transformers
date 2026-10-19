@@ -6,6 +6,8 @@
   <title>Embedding &amp; Attention Explainer</title>
   <meta name="description" content="Type a sentence and follow it through GPT-2: tokenization, token embeddings, positional encoding and self-attention, computed live in your browser from the real weights.">
   <meta name="color-scheme" content="light dark">
+  <link rel="alternate" hreflang="en" href="https://d2718281828nis.github.io/ML-Transformers/">
+  <link rel="alternate" hreflang="ru" href="https://d2718281828nis.github.io/ML-Transformers/ru/">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234338ca'/%3E%3Cg fill='%23fff'%3E%3Crect x='6' y='8' width='5' height='5' rx='1'/%3E%3Crect x='13.5' y='8' width='5' height='5' rx='1' opacity='.55'/%3E%3Crect x='21' y='8' width='5' height='5' rx='1' opacity='.3'/%3E%3Crect x='6' y='15.5' width='5' height='5' rx='1' opacity='.4'/%3E%3Crect x='13.5' y='15.5' width='5' height='5' rx='1'/%3E%3Crect x='6' y='23' width='5' height='5' rx='1' opacity='.25'/%3E%3Crect x='13.5' y='23' width='5' height='5' rx='1' opacity='.5'/%3E%3Crect x='21' y='23' width='5' height='5' rx='1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
   <script async id="katex-js" src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
@@ -26,9 +28,12 @@
       <span class="status-dot"></span><span class="status-text">Loading tokenizer…</span>
       <span class="status-bar"><span></span></span>
     </div>
+    <a class="lang-switch" id="lang-switch" href="ru/" hreflang="ru" lang="ru" title="Русская версия">RU</a>
   </div>
   <nav class="pipeline" id="pipeline" aria-label="Steps">
     <a href="#pretok">text</a><a href="#bpe">BPE</a><a href="#ids">IDs</a>
+    <span class="arrow">·</span>
+    <a href="#train">training</a>
     <span class="arrow">→</span>
     <a href="#wte">W<sub>E</sub></a><a href="#wpe">W<sub>P</sub></a><a href="#sum">e + p</a>
     <span class="arrow">→</span>
@@ -71,34 +76,123 @@
 
   <article class="step" id="pretok">
     <h3><span class="step-num">1.1</span> Split the text into chunks <a class="code" target="_blank" rel="noopener" data-code="tokenization_gpt2.py#L167">code</a></h3>
-    <p>Before BPE runs, a regular expression splits the text into rough chunks: runs of letters, runs of digits,
-      punctuation, whitespace and English contractions like <code>'s</code>. A space is glued to the <em>front</em> of the
+    <p>Before BPE runs, a regular expression cuts the text into rough chunks: runs of letters, runs of digits,
+      punctuation and other symbols, whitespace, and English contractions like <code>'s</code>. A space is glued to the <em>front</em> of the
       word that follows it, so <code>cat</code> and <code>␣cat</code> are different chunks and, later, different tokens.
       BPE never merges across chunk boundaries.</p>
+    <pre class="pattern"><code>'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+</code></pre>
+    <p><b>How the pattern is read.</b></p>
+    <ol class="steps-list">
+      <li>The <code>|</code> signs split it into <b>12 alternatives</b>. Each one describes one kind of chunk (see the table below).</li>
+      <li>The regex engine walks through the text <b>from left to right</b>. At the current position it tries the alternatives
+        <b>in the order they are written</b>, from 1 to 12.</li>
+      <li>The <b>first alternative that matches wins</b>, even if a later one would match a longer piece. Its match becomes a chunk,
+        and the engine carries on right after it.</li>
+    </ol>
+    <p>The order matters. In <code>a␣␣␣b</code>, at the spaces alternative 11 matches <code>␣␣</code> and wins, although alternative 12
+      could take all three spaces. The last space is left for the next word: <code>a · ␣␣ · ␣b</code>. And since the contractions are
+      written in lowercase, <code>it's</code> splits as <code>it · 's</code> but <code>IT'S</code> as <code>IT · ' · S</code>.</p>
+    <p class="note">Symbols: <code>\p{L}</code> any letter in any script · <code>\p{N}</code> any numeric character (digits, but also ², ½, Ⅻ) ·
+      <code>\s</code> any whitespace · <code>[^…]</code> any character except the listed ones · <code>␣?</code> an optional space ·
+      <code>+</code> one or more · <code>(?!\S)</code> "only if the next character is not a non-space".
+      Why split first at all? Without it, BPE would waste vocabulary on variants like <code>dog.</code> <code>dog!</code> <code>dog?</code>,
+      so GPT-2's authors stop merges across character categories, with an exception for the leading space
+      (<a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf" target="_blank" rel="noopener">Radford et al., 2019</a>, §2.2).</p>
     <div class="viz" id="viz-pretok"></div>
-    <details class="aside">
-      <summary>The exact pattern</summary>
-      <pre><code>'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+</code></pre>
-      <p><code>\p{L}</code> is any letter in any script, <code>\p{N}</code> any digit, <code>\s</code> whitespace. The pattern is tried left to right at
-        each position, and the first alternative that matches wins.</p>
-    </details>
   </article>
 
   <article class="step" id="bpe">
     <h3><span class="step-num">1.2</span> Merge bytes into tokens (BPE) <a class="code" target="_blank" rel="noopener" data-code="tokenization_gpt2.py#L187-L227">code</a></h3>
     <p>Each chunk is turned into its UTF-8 <b>bytes</b>. GPT-2 gives each of the 256 possible bytes a printable stand-in
       character, so a space byte is written <code>Ġ</code>. Then one rule is repeated: among all neighbouring pairs, find the one that
-      comes <b>earliest in the learned merge list</b> and glue it together everywhere in the chunk. The list
-      (<code>merges.txt</code>, 50,000 rules) was built from training text by repeatedly merging the most frequent pair, so early rules are
-      very common pairs. When no neighbouring pair is in the list, BPE stops. Frequent words end up as one token, and rare words stay in pieces.</p>
+      comes <b>earliest in the learned merge list</b> <code>merges.txt</code> and glue it together everywhere in the chunk.
+      When no neighbouring pair is in the list, BPE stops. Frequent words end up as one token, and rare words stay in pieces.
+      Where this list comes from is shown step by step in the <a href="#s-training">interlude on tokenizer training</a> after this section.</p>
     <div class="viz" id="viz-bpe"></div>
   </article>
 
   <article class="step" id="ids">
-    <h3><span class="step-num">1.3</span> Look up token IDs <a class="code" target="_blank" rel="noopener" data-code="tokenization_gpt2.py#L284-L286">code</a></h3>
-    <p>Each final piece is looked up in <code>vocab.json</code> to get its <b>token ID</b>, which is just a row number. This list of
-      integers is all the model ever sees of your text.</p>
+    <h3><span class="step-num">1.3</span> Look up token IDs in vocab.json <a class="code" target="_blank" rel="noopener" data-code="tokenization_gpt2.py#L284-L286">code</a></h3>
+    <p><code>vocab.json</code> is the tokenizer's <b>dictionary</b>: one JSON object with 50,257 entries of the form <code>"token": ID</code>.
+      The keys are written in GPT-2's byte alphabet from 1.2, so a leading space is <code>Ġ</code> (stored in the file as <code>\u0120</code>), and the values are
+      the integers 0 to 50,256. Each final piece from 1.2 is looked up there to get its <b>token ID</b>. The ID carries no meaning by itself:
+      it is a <b>row number</b>, and in step 2 it selects row ID of the embedding matrix. This list of integers is all the model ever sees of your text.</p>
+    <p>The numbering follows the training order (see <a href="#train-loop">T.3</a>): IDs 0–255 are the single bytes, then every merge rule adds the next ID
+      (rule #1 created ID 256, rule #506 created ID 761 <code>Ġneed</code>), and the last ID, 50,256, is <code>&lt;|endoftext|&gt;</code>.
+      So a small ID means a token that was merged early, which means a very common one.</p>
     <div class="viz" id="viz-ids"></div>
+  </article>
+</section>
+
+<!-- ───────────────────────── Interlude: tokenizer training ───────────────────────── -->
+<section class="stage interlude" id="s-training">
+  <header class="stage-head">
+    <span class="stage-num">T</span>
+    <div>
+      <h2>Interlude: how the tokenizer is trained</h2>
+      <p>Step 1.2 used a list of 50,000 merge rules, <code>merges.txt</code>. Nobody wrote this list by hand: it is the
+        <b>output of training the tokenizer</b>, which was done once, before GPT-2 itself was trained. This training is plain counting,
+        with no neural network involved. Below is the whole procedure on a text you can edit, and then the same idea at GPT-2's scale.</p>
+    </div>
+  </header>
+
+  <article class="step" id="train">
+    <h3><span class="step-num">T.1</span> Start: a training text and 256 bytes</h3>
+    <p>Training needs a sample of text. GPT-2's tokenizer learned from a large amount of web text; here a few lines are enough.
+      The text goes through the same pre-tokenization as in 1.1, and identical chunks are counted: from now on only the chunks and
+      their counts matter. Every chunk starts as single bytes, so the starting vocabulary is just the <b>256 possible bytes</b>.
+      That is already enough to write down any text, but only at one token per byte.</p>
+    <div class="viz" id="viz-train-start"></div>
+  </article>
+
+  <article class="step" id="train-round">
+    <h3><span class="step-num">T.2</span> One round of training, up close</h3>
+    <p>A round has four moves. <b>Count</b> how often every pair of neighbouring symbols occurs in the whole text.
+      <b>Pick</b> the pair with the highest count. <b>Merge</b> it everywhere into one new symbol.
+      <b>Write it down</b>: the pair becomes the next line of <code>merges.txt</code>, and the new symbol becomes the next entry
+      of the vocabulary. Step through the rounds below.</p>
+    <div class="viz" id="viz-train-round"></div>
+  </article>
+
+  <article class="step" id="train-loop">
+    <h3><span class="step-num">T.3</span> Repeat, and watch the text get shorter</h3>
+    <p>Every round glues the most common pair, so the training text loses one symbol for every place the pair was glued.
+      Training is <b>greedy compression</b>: each round makes the biggest saving a single new token can make. The rounds go on until
+      the vocabulary has the size you want. GPT-2's authors stopped after <b>50,000 rounds</b>, and that is the whole reason
+      <code>merges.txt</code> has 50,000 lines. Two files come out of training: <code>merges.txt</code>, the rules in the order
+      they were learned, and <code>vocab.json</code>, which gives every token its ID. Line <i>n</i> of <code>merges.txt</code>
+      is the token with ID 255 + <i>n</i>. Adding the 256 bytes and the special token <code>&lt;|endoftext|&gt;</code> gives
+      <b>256 + 50,000 + 1 = 50,257</b> tokens.</p>
+    <div class="viz" id="viz-train-loop"></div>
+  </article>
+
+  <article class="step" id="train-why">
+    <h3><span class="step-num">T.4</span> Why the output is a list of rules, not just a list of tokens</h3>
+    <p>You might expect training to output only the vocabulary. But a vocabulary alone does not say <b>how to cut</b> a word:
+      most words can be spelled with its tokens in several ways. The ordered list of merges settles this. Replaying the rules in
+      the order they were learned gives <b>exactly one answer</b>, the same every time, for training text and new text alike.
+      The list also records which two pieces each token is made of. The vocabulary adds no information of its own:
+      <code>vocab.json</code> can be rebuilt from <code>merges.txt</code>, as the check below does with GPT-2's real files.
+      That is why the IDs in 1.3 follow the rule numbers. (Other tokenizers answer "how to cut" differently: WordPiece, used by BERT,
+      takes the longest token that fits from the left, and Unigram, used by T5, picks the most probable split.)</p>
+    <div class="viz" id="viz-train-why"></div>
+  </article>
+
+  <article class="step" id="train-apply">
+    <h3><span class="step-num">T.5</span> The rules also work on text they have never seen</h3>
+    <p><code>merges.txt</code> is a procedure, not a list of memorized words. Running your rules in order on new text is exactly
+      what step 1.2 does with GPT-2's 50,000 rules. Words that never appeared in the training text still break into familiar
+      pieces. And any text at all can be tokenized, because in the worst case it falls back to single bytes.</p>
+    <div class="viz" id="viz-train-apply"></div>
+  </article>
+
+  <article class="step" id="train-scale">
+    <h3><span class="step-num">T.6</span> The same at GPT-2's scale: what if training had stopped earlier?</h3>
+    <p>Each round only adds a rule at the end of the list, so the first <i>N</i> lines of GPT-2's <code>merges.txt</code> are exactly
+      the tokenizer that training would have produced had it stopped after <i>N</i> rounds. Move the slider to tokenize your sentence
+      from the top of the page with only the first <i>N</i> rules. More rules make texts shorter in tokens, but every rule adds a token,
+      and every token adds a row of 768 learned numbers to the embedding matrix <span class="tex" data-tex="W_E">W_E</span> in step 2.</p>
+    <div class="viz" id="viz-train-scale"></div>
   </article>
 </section>
 

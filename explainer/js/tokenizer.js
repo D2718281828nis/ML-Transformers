@@ -3,9 +3,15 @@
 // (bytes_to_unicode, the pre-tokenization regex and GPT2Tokenizer.bpe) that also
 // records every merge step so the page can replay it.
 
-// Same pattern as GPT2Tokenizer.pat. JS needs the `u` flag for \p{...}.
-export const PRETOKENIZE_PATTERN =
-  "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+";
+// Same pattern as GPT2Tokenizer.pat, split into its 12 alternatives. Each one is wrapped
+// in a capture group so we can tell which alternative produced a chunk; groups don't
+// change what matches. JS needs the `u` flag for \p{...}.
+export const PRETOKENIZE_ALTERNATIVES = [
+  "'s", "'t", "'re", "'ve", "'m", "'ll", "'d",
+  " ?\\p{L}+", " ?\\p{N}+", " ?[^\\s\\p{L}\\p{N}]+", "\\s+(?!\\S)", "\\s+",
+];
+export const PRETOKENIZE_PATTERN = PRETOKENIZE_ALTERNATIVES.join("|");
+const PRETOKENIZE_GROUPED = PRETOKENIZE_ALTERNATIVES.map((a) => `(${a})`).join("|");
 
 // GPT-2 maps every byte 0..255 to a printable unicode character so the vocabulary
 // can be stored as text. Printable bytes map to themselves; the rest (space,
@@ -29,6 +35,72 @@ export function bytesToUnicode() {
   return map;
 }
 
+// Merge every non-overlapping occurrence of the pair (a, b), left to right.
+// `positions` are the indices in the result where a merge happened.
+export function mergeAll(word, a, b) {
+  const merged = [];
+  const positions = [];
+  for (let i = 0; i < word.length; i++) {
+    if (i < word.length - 1 && word[i] === a && word[i + 1] === b) {
+      positions.push(merged.length);
+      merged.push(a + b);
+      i++;
+    } else {
+      merged.push(word[i]);
+    }
+  }
+  return { merged, positions };
+}
+
+// Indices where the pair (a, b) would be merged.
+export function pairPositions(word, [a, b]) {
+  const pos = [];
+  for (let i = 0; i < word.length - 1; i++) {
+    if (word[i] === a && word[i + 1] === b) {
+      pos.push(i);
+      i++;
+    }
+  }
+  return pos;
+}
+
+// Apply BPE rules to a list of symbols. rankOf("a b") gives the rule number of a pair
+// (undefined if there is no such rule). At each step the neighbouring pair with the
+// lowest rule number (= learned earliest) is merged everywhere, until no pair has a rule.
+// Returns the final pieces and every step, so the page can replay them.
+export function bpeMerge(symbols, rankOf) {
+  let word = symbols;
+  const steps = [];
+  while (word.length > 1) {
+    let bestRank = Infinity;
+    let best = -1;
+    for (let i = 0; i < word.length - 1; i++) {
+      const r = rankOf(word[i] + " " + word[i + 1]);
+      if (r !== undefined && r < bestRank) {
+        bestRank = r;
+        best = i;
+      }
+    }
+    if (best < 0) break;
+    const pair = [word[best], word[best + 1]];
+    const { merged, positions } = mergeAll(word, ...pair);
+    steps.push({ before: word, pair, rank: bestRank, after: merged, positions });
+    word = merged;
+  }
+  return { pieces: word, steps };
+}
+
+// A key as it appears in vocab.json, which Python's json.dump wrote with non-ASCII
+// characters escaped as \uXXXX (so "Ġneed" is stored as "\u0120need").
+export function vocabJsonKey(str) {
+  const body = Array.from(str, (ch) => {
+    const c = ch.codePointAt(0);
+    if (ch === '"' || ch === "\\") return "\\" + ch;
+    return c < 0x20 || c > 0x7e ? `\\u${c.toString(16).padStart(4, "0")}` : ch;
+  }).join("");
+  return `"${body}"`;
+}
+
 const utf8 = new TextEncoder();
 const strictDecoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -38,14 +110,15 @@ export class GPT2Tokenizer {
     this.decoder = new Map(Object.entries(vocab).map(([k, v]) => [v, k]));
     this.byteEncoder = bytesToUnicode();
     this.byteDecoder = new Map([...this.byteEncoder].map(([b, c]) => [c, b]));
-    this.ranks = new Map();
-    let rank = 0;
+    this.ranks = new Map(); // "a b" -> rank (0 = first rule in merges.txt)
+    this.merges = []; // rank -> "a b"
     for (const line of mergesText.split("\n")) {
       if (!line || line.startsWith("#version")) continue;
-      this.ranks.set(line, rank++);
+      this.ranks.set(line, this.merges.length);
+      this.merges.push(line);
     }
     this.vocabSize = Object.keys(vocab).length;
-    this.numMerges = rank;
+    this.numMerges = this.merges.length;
     this.cache = new Map();
   }
 
@@ -86,55 +159,42 @@ export class GPT2Tokenizer {
     }
   }
 
-  // BPE on one byte-level chunk. Returns the final pieces and every merge step:
-  // at each step the adjacent pair with the lowest rank (= learned earliest) is
-  // merged everywhere in the word, until no adjacent pair is in merges.txt.
+  // BPE on one byte-level chunk with GPT-2's 50,000 rules (cached).
   bpe(chunk) {
     const cached = this.cache.get(chunk);
     if (cached) return cached;
-    let word = Array.from(chunk);
-    const steps = [];
-    while (word.length > 1) {
-      let bestRank = Infinity;
-      let best = -1;
-      for (let i = 0; i < word.length - 1; i++) {
-        const r = this.ranks.get(word[i] + " " + word[i + 1]);
-        if (r !== undefined && r < bestRank) {
-          bestRank = r;
-          best = i;
-        }
-      }
-      if (best < 0) break;
-      const first = word[best];
-      const second = word[best + 1];
-      const merged = [];
-      const positions = [];
-      for (let i = 0; i < word.length; i++) {
-        if (i < word.length - 1 && word[i] === first && word[i + 1] === second) {
-          positions.push(merged.length);
-          merged.push(first + second);
-          i++;
-        } else {
-          merged.push(word[i]);
-        }
-      }
-      steps.push({ before: word, pair: [first, second], rank: bestRank, after: merged, positions });
-      word = merged;
-    }
-    const result = { pieces: word, steps };
+    const result = bpeMerge(Array.from(chunk), (pair) => this.ranks.get(pair));
     this.cache.set(chunk, result);
     return result;
   }
 
+  // The same with only the first `n` rules, i.e. the tokenizer you would get by
+  // stopping training after n rounds.
+  bpeFirst(chunk, n) {
+    return bpeMerge(Array.from(chunk), (pair) => {
+      const r = this.ranks.get(pair);
+      return r !== undefined && r < n ? r : undefined;
+    }).pieces;
+  }
+
+  // Split text into chunks; `alt` is the 1-based index of the alternative that matched.
+  pretokenize(text) {
+    const re = new RegExp(PRETOKENIZE_GROUPED, "gu");
+    return Array.from(text.matchAll(re), (m) => ({
+      text: m[0],
+      start: m.index,
+      alt: m.findIndex((g, i) => i > 0 && g !== undefined),
+    }));
+  }
+
   // Full encode with every intermediate kept for the visualisation.
   encode(text) {
-    const re = new RegExp(PRETOKENIZE_PATTERN, "gu");
     const chunks = [];
     const tokens = [];
-    for (const m of text.matchAll(re)) {
-      const byteStr = this.toByteString(m[0]);
+    for (const { text: piece, start, alt } of this.pretokenize(text)) {
+      const byteStr = this.toByteString(piece);
       const { pieces, steps } = this.bpe(byteStr);
-      const chunk = { index: chunks.length, text: m[0], start: m.index, byteStr, steps, tokens: [] };
+      const chunk = { index: chunks.length, text: piece, start, alt, byteStr, steps, tokens: [] };
       for (const piece of pieces) {
         const id = this.encoder[piece];
         if (id === undefined) throw new Error(`BPE produced a piece missing from the vocabulary: ${piece}`);
