@@ -16,6 +16,13 @@
 </head>
 <body>
 
+<div class="file-warning" id="file-warning" hidden>
+  <b>The interactive parts can't run here.</b> This page was opened as a local file (<code>file://</code>), and browsers block its scripts in that mode,
+  so the visualizations stay empty. Serve the folder instead: run <code>python3 -m http.server 8000</code> inside <code>explainer/</code> and open
+  <a href="http://localhost:8000/">http://localhost:8000/</a>, or use the <a href="https://d2718281828nis.github.io/ML-Transformers/">published page</a>.
+</div>
+<script>if (location.protocol === "file:") document.getElementById("file-warning").hidden = false;</script>
+
 <header class="topbar" id="topbar">
   <div class="topbar-inner">
     <label class="input-wrap" for="text">
@@ -290,7 +297,9 @@
       embedding matrix <i>E</i> has just <b>2 numbers</b>, so it can be drawn as a point. Like GPT-2, the model uses <i>E</i> twice: to look
       up the current word, and to score every candidate for the next word. In between sits one 2 × 2 matrix <i>A</i> that stands in for
       GPT-2's 12 blocks. It starts from random numbers with std 0.02, like GPT-2, and learns with the same loop: predict the next word for
-      every example, measure the loss, follow the gradient (with the Adam optimizer). Press Train and watch the rows move.</p>
+      every example, measure the loss, follow the gradient (with the Adam optimizer). Press <b>Train</b> and watch the rows move: the dots on the
+      plot and the colored numbers in the matrix are the same rows. You can slow training down, rewind it with the slider, or drag a dot to change
+      its row by hand and see what that does to the loss.</p>
     <div class="formula"><span class="tex" data-tex="e = E[\text{word}],\quad h = A\,e,\quad z_w = E[w]\cdot h + b_w,\quad p = \mathrm{softmax}(z),\quad L = -\ln p_{\text{next}}">e = E[word], h = A e, z_w = E[w]·h + b_w</span></div>
     <div class="viz" id="viz-emb-train"></div>
   </article>

@@ -16,6 +16,13 @@
 </head>
 <body>
 
+<div class="file-warning" id="file-warning" hidden>
+  <b>Интерактивные части здесь не работают.</b> Страница открыта как локальный файл (<code>file://</code>), а в этом режиме браузеры блокируют её скрипты,
+  поэтому визуализации остаются пустыми. Откройте папку через веб-сервер: выполните <code>python3 -m http.server 8000</code> в папке <code>explainer/</code>
+  и откройте <a href="http://localhost:8000/ru/">http://localhost:8000/ru/</a> — или используйте <a href="https://d2718281828nis.github.io/ML-Transformers/ru/">опубликованную страницу</a>.
+</div>
+<script>if (location.protocol === "file:") document.getElementById("file-warning").hidden = false;</script>
+
 <header class="topbar" id="topbar">
   <div class="topbar-inner">
     <label class="input-wrap" for="text">
@@ -293,7 +300,8 @@
       чтобы взять строку текущего слова и чтобы оценить каждого кандидата на следующее слово. Между ними стоит одна матрица 2 × 2 <i>A</i>,
       которая заменяет 12 блоков GPT-2. Модель стартует со случайных чисел со ст. откл. 0.02, как GPT-2, и учится по тому же циклу:
       предсказать следующее слово для каждого примера, измерить потери, сдвинуться по градиенту (оптимизатором Adam). Нажмите «Обучать»
-      и смотрите, как движутся строки.</p>
+      и смотрите, как движутся строки: точки на графике и цветные числа в матрице — это одни и те же строки. Обучение можно замедлить,
+      перемотать ползунком назад или перетащить точку мышью, чтобы изменить строку вручную и увидеть, что станет с потерями.</p>
     <div class="formula"><span class="tex" data-tex="e = E[\text{слово}],\quad h = A\,e,\quad z_w = E[w]\cdot h + b_w,\quad p = \mathrm{softmax}(z),\quad L = -\ln p_{\text{след}}">e = E[слово], h = A e, z_w = E[w]·h + b_w</span></div>
     <div class="viz" id="viz-emb-train"></div>
   </article>
