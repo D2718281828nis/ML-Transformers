@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Static site, no build step. Marks js/*.js as ES modules for Node (tools/dump_js.mjs)."
+}

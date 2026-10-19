@@ -14,6 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
+> [!NOTE]
+> **About this fork.** This is a snapshot of 🤗 Transformers `v4.48.0.dev0` (upstream commit `0ade1ca`, 19 Dec 2024)
+> plus [`explainer/`](explainer/). That folder holds an interactive page that follows a sentence through GPT-2's tokenizer, token embeddings,
+> positional encoding and first self-attention layer, computed live in the browser from the real weights.
+> **Live:** https://d2718281828nis.github.io/ML-Transformers/ · Everything below is the upstream README.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://huggingface.co/datasets/huggingface/documentation-images/raw/main/transformers-logo-dark.svg">

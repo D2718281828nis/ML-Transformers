@@ -1,0 +1,39 @@
+name: Deploy explainer to GitHub Pages
+
+# Publishes the static site in explainer/ to https://<owner>.github.io/<repo>/.
+# One-time setup: Settings → Pages → Build and deployment → Source: "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "explainer/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The repo is ~340 MB; the site only needs this folder.
+          sparse-checkout: explainer
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: explainer
+      - id: deployment
+        uses: actions/deploy-pages@v5

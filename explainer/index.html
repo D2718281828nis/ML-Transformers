@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embedding &amp; Attention Explainer</title>
+  <meta name="description" content="Type a sentence and follow it through GPT-2: tokenization, token embeddings, positional encoding and self-attention, computed live in your browser from the real weights.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234338ca'/%3E%3Cg fill='%23fff'%3E%3Crect x='6' y='8' width='5' height='5' rx='1'/%3E%3Crect x='13.5' y='8' width='5' height='5' rx='1' opacity='.55'/%3E%3Crect x='21' y='8' width='5' height='5' rx='1' opacity='.3'/%3E%3Crect x='6' y='15.5' width='5' height='5' rx='1' opacity='.4'/%3E%3Crect x='13.5' y='15.5' width='5' height='5' rx='1'/%3E%3Crect x='6' y='23' width='5' height='5' rx='1' opacity='.25'/%3E%3Crect x='13.5' y='23' width='5' height='5' rx='1' opacity='.5'/%3E%3Crect x='21' y='23' width='5' height='5' rx='1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <script async id="katex-js" src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+
+<header class="topbar" id="topbar">
+  <div class="topbar-inner">
+    <label class="input-wrap" for="text">
+      <span class="visually-hidden">Your sentence</span>
+      <input id="text" type="text" autocomplete="off" spellcheck="false" maxlength="240"
+             value="Attention is all you need" placeholder="Type a short sentence…">
+      <span class="input-meta" id="input-meta"></span>
+    </label>
+    <div class="status" id="status" role="status" aria-live="polite">
+      <span class="status-dot"></span><span class="status-text">Loading tokenizer…</span>
+      <span class="status-bar"><span></span></span>
+    </div>
+  </div>
+  <nav class="pipeline" id="pipeline" aria-label="Steps">
+    <a href="#pretok">text</a><a href="#bpe">BPE</a><a href="#ids">IDs</a>
+    <span class="arrow">→</span>
+    <a href="#wte">W<sub>E</sub></a><a href="#wpe">W<sub>P</sub></a><a href="#sum">e + p</a>
+    <span class="arrow">→</span>
+    <a href="#ln">LayerNorm</a><a href="#qkv">Q K V</a><a href="#scores">q·k</a><a href="#mask">÷√d · mask</a><a href="#softmax">softmax</a><a href="#weighted">Σ a·v</a><a href="#heads">12 heads</a><a href="#proj">W<sub>O</sub> + x</a>
+  </nav>
+</header>
+
+<main>
+
+<section class="hero">
+  <p class="kicker">GPT-2 small · real weights · computed in your browser</p>
+  <h1>From text to attention</h1>
+  <p class="lede">
+    Every language model starts the same way: it cuts text into tokens, turns each token into a vector,
+    stamps it with its position, and lets the vectors look at each other through <em>self-attention</em>.
+    Type a sentence above and follow it through each of those steps. Every number on this page comes from the real
+    GPT-2 (small) weights, downloaded piece by piece from the Hugging Face Hub and multiplied out right here.
+  </p>
+  <div class="examples" id="examples" aria-label="Example sentences"></div>
+  <ul class="howto">
+    <li><b>Hover</b> any token to highlight it everywhere on the page. <b>Click</b> a token to select it. Detail views follow the selected token.</li>
+    <li>Vectors are drawn as strips of colored cells: <span class="swatch neg"></span> negative, <span class="swatch zero"></span> near zero, <span class="swatch pos"></span> positive. Hover a strip to read the exact numbers.</li>
+    <li>This page zooms into the first part of the pipeline shown by
+      <a href="https://poloclub.github.io/transformer-explainer/" target="_blank" rel="noopener">Transformer Explainer</a>.
+      After the attention step it hands back to that page.</li>
+  </ul>
+</section>
+
+<!-- ───────────────────────── 1. Tokenization ───────────────────────── -->
+<section class="stage" id="s-tokenize">
+  <header class="stage-head">
+    <span class="stage-num">1</span>
+    <div>
+      <h2>Tokenization</h2>
+      <p>A network can't read letters. It needs numbers, so the text is first cut into pieces taken from a fixed list,
+        the <em>vocabulary</em>, and each piece is replaced by its position in that list. GPT-2's vocabulary has
+        <b>50,257</b> entries, built with <em>byte-pair encoding</em> (BPE).</p>
+    </div>
+  </header>
+
+  <article class="step" id="pretok">
+    <h3><span class="step-num">1.1</span> Split the text into chunks <a class="code" target="_blank" rel="noopener" data-code="tokenization_gpt2.py#L167">code</a></h3>
+    <p>Before BPE runs, a regular expression splits the text into rough chunks: runs of letters, runs of digits,
+      punctuation, whitespace and English contractions like <code>'s</code>. A space is glued to the <em>front</em> of the
+      word that follows it, so <code>cat</code> and <code>␣cat</code> are different chunks and, later, different tokens.
+      BPE never merges across chunk boundaries.</p>
+    <div class="viz" id="viz-pretok"></div>
+    <details class="aside">
+      <summary>The exact pattern</summary>
+      <pre><code>'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+</code></pre>
+      <p><code>\p{L}</code> is any letter in any script, <code>\p{N}</code> any digit, <code>\s</code> whitespace. The pattern is tried left to right at
+        each position, and the first alternative that matches wins.</p>
+    </details>
+  </article>
+
+  <article class="step" id="bpe">
+    <h3><span class="step-num">1.2</span> Merge bytes into tokens (BPE) <a class="code" target="_blank" rel="noopener" data-code="tokenization_gpt2.py#L187-L227">code</a></h3>
+    <p>Each chunk is turned into its UTF-8 <b>bytes</b>. GPT-2 gives each of the 256 possible bytes a printable stand-in
+      character, so a space byte is written <code>Ġ</code>. Then one rule is repeated: among all neighbouring pairs, find the one that
+      comes <b>earliest in the learned merge list</b> and glue it together everywhere in the chunk. The list
+      (<code>merges.txt</code>, 50,000 rules) was built from training text by repeatedly merging the most frequent pair, so early rules are
+      very common pairs. When no neighbouring pair is in the list, BPE stops. Frequent words end up as one token, and rare words stay in pieces.</p>
+    <div class="viz" id="viz-bpe"></div>
+  </article>
+
+  <article class="step" id="ids">
+    <h3><span class="step-num">1.3</span> Look up token IDs <a class="code" target="_blank" rel="noopener" data-code="tokenization_gpt2.py#L284-L286">code</a></h3>
+    <p>Each final piece is looked up in <code>vocab.json</code> to get its <b>token ID</b>, which is just a row number. This list of
+      integers is all the model ever sees of your text.</p>
+    <div class="viz" id="viz-ids"></div>
+  </article>
+</section>
+
+<!-- ───────────────────────── 2. Token embedding ───────────────────────── -->
+<section class="stage" id="s-embed">
+  <header class="stage-head">
+    <span class="stage-num">2</span>
+    <div>
+      <h2>Token embedding</h2>
+      <p>An ID is only a label: token 8086 is not "bigger" than token 318. So each ID is swapped for a list of
+        <b>768 learned numbers</b>, its <em>embedding</em>. During training these numbers were nudged until tokens that are used in similar
+        ways got similar vectors.</p>
+    </div>
+  </header>
+
+  <article class="step" id="wte">
+    <h3><span class="step-num">2.1</span> Read one row of the embedding matrix per token <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L819">code</a></h3>
+    <p>All embeddings live in one matrix <span class="tex" data-tex="W_E">W_E</span> with one row per vocabulary entry:
+      50,257 rows × 768 columns ≈ <b>38.6 million numbers</b>, almost a third of GPT-2 small's 124 M parameters. Embedding a token is nothing more than
+      <b>reading row number ID</b>. Mathematically it is a one-hot vector times the matrix, but nobody computes it that way.</p>
+    <div class="formula"><span class="tex" data-tex="e_i = W_E[\,\mathrm{id}_i\,] = \mathrm{onehot}(\mathrm{id}_i)\,W_E \;\in \mathbb{R}^{768},\qquad W_E \in \mathbb{R}^{50257\times 768}">e_i = W_E[id_i]</span></div>
+    <div class="viz" id="viz-wte"></div>
+  </article>
+
+  <article class="step" id="sim">
+    <h3><span class="step-num">2.2</span> Similar tokens, similar vectors</h3>
+    <p>Two embeddings can be compared with <em>cosine similarity</em>, the cosine of the angle between them. 1 means they point the same way and 0 means unrelated.
+      Individual dimensions don't have human-readable meanings. The information is in the pattern as a whole.
+      Note that <code>The</code> and <code>␣the</code> are different tokens with different, but related, vectors.</p>
+    <div class="formula"><span class="tex" data-tex="\cos(e_i, e_j) = \frac{e_i \cdot e_j}{\lVert e_i\rVert\,\lVert e_j\rVert}">cos(e_i, e_j)</span></div>
+    <div class="viz" id="viz-sim"></div>
+    <p class="note">Identical tokens get identical vectors wherever they appear. At this point the model has <b>no idea of word order</b>.</p>
+  </article>
+</section>
+
+<!-- ───────────────────────── 3. Positional encoding ───────────────────────── -->
+<section class="stage" id="s-position">
+  <header class="stage-head">
+    <span class="stage-num">3</span>
+    <div>
+      <h2>Positional encoding</h2>
+      <p>Self-attention (step 4) compares every token with every other token, but the comparison itself ignores order:
+        shuffle the input vectors and, without the causal mask, the outputs come out shuffled the same way. To attention,
+        <span class="example-link" data-example="dog bites man">dog bites man</span> and
+        <span class="example-link" data-example="man bites dog">man bites dog</span> would be the same bag of vectors.
+        So before attention, GPT-2 adds to each token a second vector that depends <b>only on its position</b>.</p>
+    </div>
+  </header>
+
+  <article class="step" id="wpe">
+    <h3><span class="step-num">3.1</span> GPT-2 learns a table of positions <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L820">code</a></h3>
+    <p>GPT-2 learns a second matrix <span class="tex" data-tex="W_P">W_P</span> during training. It has 1,024 rows (the longest input GPT-2 can read) × 768 columns.
+      Position 0 uses row 0, position 1 uses row 1, and so on, whatever token sits there. The original Transformer
+      (<a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Vaswani et al., 2017</a>) used a fixed formula instead.
+      Every pair of dimensions is a sine/cosine wave with its own wavelength, so each position gets a unique, smoothly changing fingerprint.
+      Toggle between the two below.</p>
+    <div class="formula"><span class="tex" data-tex="p_i = W_P[\,i\,] \;\in\mathbb{R}^{768} \qquad\text{vs.}\qquad PE_{(pos,\,2k)} = \sin\!\Big(\frac{pos}{10000^{2k/768}}\Big),\;\; PE_{(pos,\,2k+1)} = \cos\!\Big(\frac{pos}{10000^{2k/768}}\Big)">p_i = W_P[i]</span></div>
+    <div class="viz" id="viz-wpe"></div>
+  </article>
+
+  <article class="step" id="sum">
+    <h3><span class="step-num">3.2</span> Add them: token + position <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L819-L821">code</a></h3>
+    <p>The input to the first Transformer block is the <b>element-wise sum</b> of the two vectors. It is still 768 numbers per token, with no concatenation.
+      The same word at two different positions now has two different vectors.</p>
+    <div class="formula"><span class="tex" data-tex="x_i = e_i + p_i = W_E[\,\mathrm{id}_i\,] + W_P[\,i\,],\qquad X \in \mathbb{R}^{n\times 768}">x_i = e_i + p_i</span></div>
+    <div class="viz" id="viz-sum"></div>
+  </article>
+</section>
+
+<!-- ───────────────────────── 4. Self-attention ───────────────────────── -->
+<section class="stage" id="s-attention">
+  <header class="stage-head">
+    <span class="stage-num">4</span>
+    <div>
+      <h2>Self-attention <small>block 1 of 12</small></h2>
+      <p>Attention lets every token pull in information from the tokens before it. Each token makes three vectors from its embedding:
+        a <b class="q">query</b> (what am I looking for?), a <b class="k">key</b> (what do I contain?) and a <b class="v">value</b>
+        (what do I hand over if I'm picked?). How well token <i>i</i>'s query matches token <i>j</i>'s key decides how much of <i>j</i>'s value flows into <i>i</i>.</p>
+      <div class="formula"><span class="tex" data-tex="\mathrm{Attention}(Q,K,V) = \mathrm{softmax}\!\Big(\frac{QK^{\top}}{\sqrt{d_k}} + M\Big)\,V">Attention(Q,K,V) = softmax(QKᵀ/√d_k + M) V</span></div>
+    </div>
+  </header>
+
+  <div class="attn-controls" id="attn-controls"></div>
+
+  <article class="step" id="ln">
+    <h3><span class="step-num">4.1</span> Normalize each token (LayerNorm) <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L403">code</a></h3>
+    <p>GPT-2 first normalizes every token vector on its own: subtract its mean, divide by its standard deviation, then apply a learned
+      per-dimension scale <span class="tex" data-tex="\gamma">γ</span> and shift <span class="tex" data-tex="\beta">β</span>. This keeps the numbers in a stable range however large the embedding is.
+      (GPT-2 does this <em>before</em> attention, a design called "pre-LN".)</p>
+    <div class="formula"><span class="tex" data-tex="\hat{x}_i = \gamma \odot \frac{x_i - \mu_i}{\sqrt{\sigma_i^2 + \epsilon}} + \beta,\qquad \mu_i = \tfrac{1}{768}\textstyle\sum_d x_{i,d}">x̂_i = γ ⊙ (x_i − μ_i)/σ_i + β</span></div>
+    <div class="viz" id="viz-ln"></div>
+  </article>
+
+  <article class="step" id="qkv">
+    <h3><span class="step-num">4.2</span> Project to queries, keys and values <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L293-L301">code</a></h3>
+    <p>Three learned matrices turn each normalized vector into a query, a key and a value. GPT-2 stores them side by side as one
+      768 × 2,304 matrix (<code>c_attn</code>), so a single multiplication produces all three. Each output number is a weighted sum of all
+      768 inputs plus a bias.</p>
+    <div class="formula"><span class="tex" data-tex="[\,Q \mid K \mid V\,] = \hat{X}\,W_{qkv} + b_{qkv},\qquad q_{i,j} = \sum_{d=1}^{768} \hat{x}_{i,d}\,W_{d,j} + b_j">[Q|K|V] = X̂ W + b</span></div>
+    <p><b>Multi-head split.</b> Each 768-long vector is then cut into <b>12 slices of 64</b>. Slice <i>h</i> of every query, key and value belongs to
+      <em>head h</em>, and the 12 heads run attention independently and in parallel. The highlighted slice below is the selected head. Click another slice to switch.</p>
+    <div class="formula"><span class="tex" data-tex="q_i^{(h)} = q_i[\,64h : 64h{+}64\,],\quad k_j^{(h)} = k_j[\,64h : 64h{+}64\,],\quad v_j^{(h)} = v_j[\,64h : 64h{+}64\,]">q_i^(h) = q_i[64h : 64h+64]</span></div>
+    <div class="viz" id="viz-qkv"></div>
+  </article>
+
+  <article class="step" id="scores">
+    <h3><span class="step-num">4.3</span> Score every pair: query · key <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L116">code</a></h3>
+    <p>For the selected head, the score between query token <i>i</i> (row) and key token <i>j</i> (column) is the
+      <b>dot product</b> of their 64-number slices: multiply them position by position and add everything up. A large positive score means a strong match.
+      Hover or click a cell to see the 64 products that make it up.</p>
+    <div class="formula"><span class="tex" data-tex="s_{ij} = q_i^{(h)} \cdot k_j^{(h)} = \sum_{d=1}^{64} q_{i,d}\,k_{j,d}\qquad S = Q^{(h)} K^{(h)\top} \in \mathbb{R}^{n\times n}">s_ij = q_i · k_j</span></div>
+    <div class="viz" id="viz-scores"></div>
+  </article>
+
+  <article class="step" id="mask">
+    <h3><span class="step-num">4.4</span> Scale, then hide the future <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L118-L135">code</a></h3>
+    <p><b>Scale.</b> A sum of 64 products can get large, and softmax over large numbers is almost all-or-nothing. Dividing by
+      <span class="tex" data-tex="\sqrt{d_k} = \sqrt{64} = 8">√64 = 8</span> keeps the scores in a range where several tokens can share attention.
+      <b>Mask.</b> GPT-2 is trained to predict the <em>next</em> token, so a token must not peek at the tokens after it. Every score with
+      <i>j</i> &gt; <i>i</i> (above the diagonal) is replaced by −∞, and softmax turns −∞ into exactly 0.</p>
+    <div class="formula"><span class="tex" data-tex="s'_{ij} = \begin{cases} s_{ij}/\sqrt{64} & j \le i \\ -\infty & j > i \end{cases}">s'_ij = s_ij/8 if j ≤ i else −∞</span></div>
+    <div class="viz" id="viz-mask"></div>
+  </article>
+
+  <article class="step" id="softmax">
+    <h3><span class="step-num">4.5</span> Softmax: scores become weights <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L141">code</a></h3>
+    <p>Softmax turns each row of scores into <b>attention weights</b> that are positive and add up to 1: exponentiate each score, then divide by the row total.
+      Row <i>i</i> answers the question "how much should token <i>i</i> listen to each earlier token?"</p>
+    <div class="formula"><span class="tex" data-tex="a_{ij} = \frac{e^{\,s'_{ij}}}{\sum_{k\le i} e^{\,s'_{ik}}},\qquad \sum_{j} a_{ij} = 1">a_ij = exp(s'_ij) / Σ_k exp(s'_ik)</span></div>
+    <div class="viz" id="viz-softmax"></div>
+  </article>
+
+  <article class="step" id="weighted">
+    <h3><span class="step-num">4.6</span> Blend the values <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L151">code</a></h3>
+    <p>The head's output for token <i>i</i> is a <b>weighted average of value vectors</b>, with the attention weights as the mix.
+      If token <i>i</i> puts 90% of its attention on one token, its output is almost a copy of that token's value.
+      This is how information moves between positions.</p>
+    <div class="formula"><span class="tex" data-tex="z_i^{(h)} = \sum_{j\le i} a_{ij}\, v_j^{(h)} \;\in\mathbb{R}^{64}">z_i = Σ_j a_ij v_j</span></div>
+    <div class="viz" id="viz-weighted"></div>
+  </article>
+
+  <article class="step" id="heads">
+    <h3><span class="step-num">4.7</span> Twelve heads, side by side <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L347">code</a></h3>
+    <p>All 12 heads follow the same recipe, each with its own slice of the weights, so they learn different habits. Even in this first layer
+      you can spot some: heads that mostly look at the token itself, heads that look at the previous token, and heads that put their attention
+      on the first token, a common "nothing to do here" default sometimes called an <em>attention sink</em>. Click a head to inspect it.
+      Their 12 outputs of 64 numbers are then glued back together into one 768-number vector.</p>
+    <div class="formula"><span class="tex" data-tex="z_i = \big[\, z_i^{(0)} \mid z_i^{(1)} \mid \cdots \mid z_i^{(11)} \,\big] \in \mathbb{R}^{768}">z_i = [z_i^(0) | … | z_i^(11)]</span></div>
+    <div class="viz" id="viz-heads"></div>
+  </article>
+
+  <article class="step" id="proj">
+    <h3><span class="step-num">4.8</span> Mix the heads and add back the input <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L348">code</a> <a class="code" target="_blank" rel="noopener" data-code="modeling_gpt2.py#L415">residual</a></h3>
+    <p>One more learned matrix <span class="tex" data-tex="W_O">W_O</span> (768 × 768, <code>c_proj</code>) mixes what the 12 heads found. The result is then
+      <b>added</b> to the token's vector from step 3. This <em>residual connection</em> means attention contributes an update to each token
+      instead of replacing it.</p>
+    <div class="formula"><span class="tex" data-tex="h_i = x_i + \big(z_i\,W_O + b_O\big)">h_i = x_i + z_i W_O + b_O</span></div>
+    <div class="viz" id="viz-proj"></div>
+  </article>
+</section>
+
+<section class="stage next" id="s-next">
+  <header class="stage-head">
+    <span class="stage-num">→</span>
+    <div>
+      <h2>What happens next</h2>
+      <p>The vectors <span class="tex" data-tex="h_i">h_i</span> go through a second LayerNorm and an MLP (768 → 3,072 → 768), then through
+        <b>11 more blocks</b> exactly like this one. The last block's vector is finally compared with all 50,257 token embeddings to score every
+        possible next token. <a href="https://poloclub.github.io/transformer-explainer/" target="_blank" rel="noopener">Transformer Explainer</a> shows that
+        part, including temperature and sampling.</p>
+    </div>
+  </header>
+</section>
+
+</main>
+
+<footer class="footer">
+  <p>Weights: <a href="https://huggingface.co/openai-community/gpt2" target="_blank" rel="noopener">openai-community/gpt2</a> (MIT), pinned revision
+    <code>607a30d</code>. They are fetched with HTTP Range requests: about 10 MB of the 548 MB <code>model.safetensors</code>, then cached in your browser.
+    The math in <code>js/model.js</code> was checked against <code>GPT2Model</code> from this repository's <code>src/transformers</code>
+    (largest difference in attention weights below 1e-6; see <code>tools/verify.py</code>).</p>
+  <p>Source: <a id="source-link" href="https://github.com/D2718281828nis/ML-Transformers/tree/main/explainer" target="_blank" rel="noopener">explainer/</a> in
+    D2718281828nis/ML-Transformers. Inspired by <a href="https://poloclub.github.io/transformer-explainer/" target="_blank" rel="noopener">Transformer Explainer</a>
+    (Cho et al., Georgia Tech).</p>
+</footer>
+
+<div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+<style id="hover-style"></style>
+<style id="focus-style"></style>
+</body>
+</html>
