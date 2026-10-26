@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Автоэнкодеры наглядно</title>
+  <meta name="description" content="Автоэнкодеры и вариационные автоэнкодеры: от игрушечной 2D-модели, которая обучается прямо в браузере, до рукописных цифр и прогнозирования временных рядов по статье «Are Transformers Effective for Time Series Forecasting?».">
+  <meta name="color-scheme" content="light dark">
+  <link rel="alternate" hreflang="en" href="https://d2718281828nis.github.io/ML-Transformers/autoencoders/">
+  <link rel="alternate" hreflang="ru" href="https://d2718281828nis.github.io/ML-Transformers/autoencoders/ru/">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234338ca'/%3E%3Cpath d='M6 8h6l3 8-3 8H6zM26 8h-6l-3 8 3 8h6z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <script async id="katex-js" src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="../css/style.css">
+  <script type="module" src="../js/app.js"></script>
+</head>
+<body>
+
+<div class="file-warning" id="file-warning" hidden>
+  <b>Интерактивные части здесь не работают.</b> Страница открыта как локальный файл (<code>file://</code>), а в этом режиме браузеры блокируют её скрипты.
+  Запустите сервер: <code>python3 -m http.server 8000</code> в папке <code>explainer/</code> и откройте
+  <a href="http://localhost:8000/autoencoders/ru/">http://localhost:8000/autoencoders/ru/</a>, или откройте <a href="https://d2718281828nis.github.io/ML-Transformers/autoencoders/ru/">опубликованную страницу</a>.
+</div>
+<script>if (location.protocol === "file:") document.getElementById("file-warning").hidden = false;</script>
+
+<header class="topbar" id="top">
+  <div class="topbar-inner">
+    <a class="brand" href="#">Автоэнкодеры <span>наглядно</span></a>
+    <nav class="pipeline" id="pipeline" aria-label="Разделы">
+      <a href="#ae-toy">АЭ</a><a href="#dg-map">цифры</a>
+      <span class="arrow">→</span>
+      <a href="#vae-elbo">VAE</a><a href="#vae-beta">β</a>
+      <span class="arrow">→</span>
+      <a href="#p-table">статья</a><a href="#p-linear">W</a>
+      <span class="arrow">→</span>
+      <a href="#f-lowrank">W = D·E</a><a href="#f-window">прогноз</a><a href="#f-lab">лаборатория</a>
+      <span class="arrow">→</span>
+      <a href="#c-fan">CVAE</a>
+    </nav>
+    <a class="top-link" href="../../ru/" title="Эмбеддинги и внимание GPT-2 наглядно">GPT-2 наглядно</a>
+    <a class="lang-switch" id="lang-switch" href="../" hreflang="en" lang="en" title="English version">EN</a>
+  </div>
+</header>
+
+<main>
+
+<section class="hero">
+  <p class="kicker">Автоэнкодеры · VAE · LTSF-Linear · считается в вашем браузере</p>
+  <h1>Сжать, восстановить, предсказать</h1>
+  <p class="lede">
+    <em>Автоэнкодер</em> пропускает данные через узкое горлышко и восстанавливает их на другой стороне. Эта страница разворачивает идею
+    шаг за шагом: от игрушечной 2D-модели, которая обучается у вас на глазах, через рукописные цифры к <em>вариационному</em> автоэнкодеру,
+    из которого можно сэмплировать. Затем та же идея приходит в прогнозирование временных рядов через статью
+    <a href="https://arxiv.org/abs/2205.13504" target="_blank" rel="noopener">Are Transformers Effective for Time Series Forecasting?</a>,
+    где один линейный слой оказывается замаскированным автоэнкодером.
+  </p>
+  <nav class="map" aria-label="Части">
+    <a href="#s-ae"><b><i>1</i>Автоэнкодеры</b><span>2D-точки через горлышко в одно число, обучение вживую</span></a>
+    <a href="#s-digits"><b><i>2</i>Цифры</b><span>пространство кодов из двух чисел, нарисуйте свою цифру</span></a>
+    <a href="#s-vae"><b><i>3</i>Вариационный АЭ</b><span>облака вместо точек, слагаемое KL, ручка β</span></a>
+    <a href="#s-paper"><b><i>4</i>Статья</b><span>один линейный слой против пяти трансформеров</span></a>
+    <a href="#s-forecast"><b><i>5</i>АЭ-прогнозист</b><span>линейное отображение как энкодер + декодер; обучите сами</span></a>
+    <a href="#s-cvae"><b><i>6</i>Неопределённость</b><span>условный VAE рисует много вариантов будущего</span></a>
+  </nav>
+  <ul class="howto">
+    <li><b>Наводите</b> курсор на графики, чтобы читать значения. Любой переключатель пересчитывает всё сразу: игрушечные модели обучаются в браузере,
+      а модели для цифр и прогнозов (обученные в <a href="https://github.com/D2718281828nis/ML-Transformers/tree/main/notebooks/autoencoders" target="_blank" rel="noopener">ноутбуках</a>)
+      выполняются здесь на обычном JavaScript.</li>
+    <li>Веса со знаком показаны цветом <span class="legend"><span class="bar" style="width:60px;background:linear-gradient(to right, rgb(var(--c-neg)), rgb(var(--c-mid)), rgb(var(--c-pos)))"></span></span>:
+      от отрицательных (синий) через ноль (серый) к положительным (красный).</li>
+  </ul>
+</section>
+
+<!-- ───────────────────────── 1. Автоэнкодеры ───────────────────────── -->
+<section class="stage" id="s-ae">
+  <header class="stage-head">
+    <span class="stage-num">1</span>
+    <div>
+      <h2>Автоэнкодеры: сжать и восстановить</h2>
+      <p>Автоэнкодер — это две сети, которые обучаются как одна. <b>Энкодер</b> сжимает вход в короткий <b>код</b>, <b>декодер</b> восстанавливает
+        вход по этому коду. Никто не говорит сети, что должен означать код. Середина узкая, поэтому восстановить вход хорошо можно, только сохранив
+        то, что сильнее всего меняется от примера к примеру, и выбросив остальное.</p>
+    </div>
+  </header>
+
+  <article class="step" id="ae-idea">
+    <h3><span class="step-num">1.1</span> Энкодер, горлышко, декодер</h3>
+    <div class="flow" aria-hidden="true">
+      <span class="node">вход <span class="tex" data-tex="x">x</span><small>d чисел</small></span><span class="op">→</span>
+      <span class="node">энкодер <span class="tex" data-tex="f_\phi">f</span></span><span class="op">→</span>
+      <span class="node accent narrow">код <span class="tex" data-tex="z">z</span><small>k &lt; d</small></span><span class="op">→</span>
+      <span class="node">декодер <span class="tex" data-tex="g_\theta">g</span></span><span class="op">→</span>
+      <span class="node">восстановленный <span class="tex" data-tex="\hat x">x̂</span><small>d чисел</small></span>
+    </div>
+    <div class="formula"><span class="tex" data-tex="z = f_\phi(x), \qquad \hat x = g_\theta(z), \qquad \mathcal{L}(\phi,\theta) = \frac1N \sum_{i=1}^{N} \big\lVert x_i - g_\theta\big(f_\phi(x_i)\big)\big\rVert^2">z = f(x), x̂ = g(z), L = mean ‖x − g(f(x))‖²</span></div>
+    <p>У этой одной идеи много применений: <b>сжатие</b> (храним <span class="tex" data-tex="z">z</span>), <b>признаки</b> для другой модели,
+      <b>очистка от шума</b> (подаём зашумлённый вход, просим чистый) и <b>поиск аномалий</b>: вход, непохожий на обучающие данные, восстанавливается плохо.
+      В части 5 та же форма превращается в прогнозиста.</p>
+  </article>
+
+  <article class="step" id="ae-toy">
+    <h3><span class="step-num">1.2</span> Вживую: 2D-точки через горлышко в одно число</h3>
+    <p>У каждой точки две координаты, у кода — одна. Нажмите <b>Обучить</b> и смотрите, как энкодер и декодер учатся вместе. Синяя кривая —
+      <em>всё, что умеет нарисовать декодер</em>: каждая реконструкция (оранжевая) обязана лечь на неё. <b>Линейный</b> автоэнкодер может нарисовать только
+      прямую. <b>Нелинейный</b> (по два скрытых слоя из 24 tanh-нейронов с каждой стороны) может изогнуть её по форме данных.</p>
+    <div class="viz" id="viz-toy"></div>
+    <div class="callout"><p><b>Линейный автоэнкодер — это PCA.</b> При обучении на квадратичную ошибку линейный АЭ с <span class="tex" data-tex="k">k</span> кодами
+      натягивает то же подпространство, что и первые <span class="tex" data-tex="k">k</span> главных компонент (Baldi &amp; Hornik, 1989). На данных <i>облако</i>
+      его ошибка сходится к ошибке PCA, которая показана рядом. На <i>дуге</i> и <i>волне</i> никакая прямая не справится, а нелинейный АЭ справляется.</p></div>
+    <p>Полоса под графиком показывает код каждой точки. Когда нелинейный АЭ выучил дугу, цвета на полосе идут по порядку: он <em>развернул</em> кривую,
+      и код стал означать «насколько далеко вдоль дуги». Это общая картина. Данные, которые выглядят многомерными, часто лежат около поверхности
+      меньшей размерности; энкодер учит координаты на этой поверхности, а декодер — как её нарисовать.</p>
+  </article>
+</section>
+
+<!-- ───────────────────────── 2. Цифры ───────────────────────── -->
+<section class="stage" id="s-digits">
+  <header class="stage-head">
+    <span class="stage-num">2</span>
+    <div>
+      <h2>Автоэнкодер для рукописных цифр</h2>
+      <p>Теперь настоящие данные: 1797 рукописных цифр размером 8 × 8 пикселей (<code>digits</code> из scikit-learn). Энкодер (64 → 128 → 2) сжимает
+        каждое изображение в <b>два</b> числа, так что каждая картинка становится точкой на плоскости, которую можно рассмотреть. Декодер (2 → 128 → 64) превращает
+        любую точку этой плоскости обратно в изображение. Сети обучены в <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/01_autoencoders_and_vae.ipynb" target="_blank" rel="noopener">ноутбуке 01</a>
+        и выполняются здесь.</p>
+    </div>
+  </header>
+
+  <article class="step" id="dg-map">
+    <h3><span class="step-num">2.1</span> Каждое изображение — два числа</h3>
+    <p>Каждое изображение нарисовано своей цифрой в точке своего кода. Энкодер ни разу не видел меток, но цифры сами разложились по областям,
+      а похожие (3, 5, 8, 9) оказались рядом. <b>Наведите</b> на точку, чтобы сравнить изображение с его реконструкцией всего из двух чисел. Уведите курсор
+      в пустое место — декодер покажет, что означает для него эта точка.</p>
+    <div class="viz" id="viz-dg-map"></div>
+  </article>
+
+  <article class="step" id="dg-draw">
+    <h3><span class="step-num">2.2</span> Нарисуйте цифру</h3>
+    <p>Рисуйте на сетке 8 × 8 или начните с настоящей тестовой цифры и измените её. Рисунок кодируется после каждого штриха. Посмотрите, куда он попадает
+      и сколько от него остаётся после горлышка из двух чисел.</p>
+    <div class="viz" id="viz-dg-draw"></div>
+  </article>
+
+  <article class="step" id="dg-holes">
+    <h3><span class="step-num">2.3</span> Что декодер рисует повсюду</h3>
+    <p>Декодируем регулярную сетку точек по всей области, где живут коды. На таких маленьких данных декодер экстраполирует аккуратно: почти каждая клетка
+      всё ещё похожа на какую-то цифру. Проблемы — в <b>раскладке</b>. У кодов нет фиксированного масштаба и центра, а цифрам достаётся очень неравная территория.
+      Бросим точки равномерно в прямоугольник и спросим, какой цифре принадлежит ближайший код:</p>
+    <div class="viz" id="viz-dg-grid"></div>
+    <p>Итак, обычный автоэнкодер даёт хороший <b>энкодер</b>, но не <b>генератор</b>. Ничто не говорит, из какого распределения брать <span class="tex" data-tex="z">z</span>,
+      и ничто не ограничивает декодер там, куда не попал ни один код. На более богатых данных (лица, звуки) такие области обычно декодируются в мусор.</p>
+  </article>
+</section>
+
+<!-- ───────────────────────── 3. VAE ───────────────────────── -->
+<section class="stage" id="s-vae">
+  <header class="stage-head">
+    <span class="stage-num">3</span>
+    <div>
+      <h2>Вариационный автоэнкодер: от точек к облакам</h2>
+      <p>Kingma и Welling (2014) превратили автоэнкодер в вероятностную модель, из которой можно сэмплировать: берём код из фиксированного априорного
+        распределения и декодируем. Для этого энкодер возвращает уже не точку, а небольшое гауссово <b>облако</b>, а второе слагаемое функции потерь держит
+        каждое облако рядом с априорным распределением.</p>
+    </div>
+  </header>
+
+  <article class="step" id="vae-elbo">
+    <h3><span class="step-num">3.1</span> Цель: хорошо восстанавливать и держаться рядом с априорным распределением</h3>
+    <p><b>Порождающая история.</b> Сначала код, потом изображение:</p>
+    <div class="formula"><span class="tex" data-tex="z \sim p(z) = \mathcal N(0, I), \qquad x \sim p_\theta(x \mid z) = \textstyle\prod_{j=1}^{64} \mathrm{Bernoulli}\big(x_j;\ \sigma(g_\theta(z))_j\big)">z ~ N(0, I), x ~ p(x | z)</span></div>
+    <p>Подогнать модель значит максимизировать <span class="tex" data-tex="\log p_\theta(x) = \log\int p_\theta(x\mid z)\,p(z)\,dz">log p(x)</span> — интеграл по всем возможным кодам.
+      Энкодер подсказывает, где искать: <span class="tex" data-tex="q_\phi(z\mid x) = \mathcal N\big(\mu_\phi(x), \operatorname{diag}\sigma^2_\phi(x)\big)">q(z | x) = N(μ, σ²)</span>.
+      Для любого такого <span class="tex" data-tex="q">q</span> логарифм правдоподобия ограничен снизу величиной <b>ELBO</b> (вариационная нижняя граница), а функция потерь —
+      это ELBO с обратным знаком:</p>
+    <div class="formula"><span class="tex" data-tex="\mathcal L(x) = \underbrace{-\,\mathbb E_{q_\phi(z\mid x)}\big[\log p_\theta(x\mid z)\big]}_{\text{реконструкция}} \;+\; \beta\,\underbrace{\mathrm{KL}\big(q_\phi(z\mid x)\,\|\,\mathcal N(0,I)\big)}_{\frac12\sum_j \left(\mu_j^2 + \sigma_j^2 - \ln\sigma_j^2 - 1\right)}, \qquad \beta = 1">L = реконструкция + β · KL</span></div>
+    <p>Слагаемое реконструкции — это потери обычного автоэнкодера. Слагаемое <b>KL</b> — плата за то, насколько облако отличается от априорного распределения. Оно равно нулю,
+      только когда <span class="tex" data-tex="\mu = 0">μ = 0</span> и <span class="tex" data-tex="\sigma = 1">σ = 1</span>, то есть когда код ничего не сообщает о входе.
+      Попробуйте для одного измерения:</p>
+    <div class="viz" id="viz-kl"></div>
+  </article>
+
+  <article class="step" id="vae-cloud">
+    <h3><span class="step-num">3.2</span> Как взять код: трюк репараметризации</h3>
+    <p>Обратное распространение ошибки не проходит через операцию «вытянуть случайное число». Трюк в том, чтобы записать сэмпл как детерминированную функцию
+      выходов энкодера и внешнего шума — тогда градиенты доходят до <span class="tex" data-tex="\mu">μ</span> и <span class="tex" data-tex="\sigma">σ</span>:</p>
+    <div class="formula"><span class="tex" data-tex="z = \mu_\phi(x) + \sigma_\phi(x)\odot\varepsilon, \qquad \varepsilon\sim\mathcal N(0, I)">z = μ + σ ⊙ ε</span></div>
+    <p><b>Щёлкните</b> по изображению в пространстве кодов VAE (обучен с β = 1). Его облако нарисовано эллипсом <span class="tex" data-tex="\mu \pm 2\sigma">μ ± 2σ</span>.
+      Нажмите <b>Вытянуть ε</b>, чтобы взять коды внутри него: каждый декодируется в немного другую версию изображения.</p>
+    <div class="viz" id="viz-vae-cloud"></div>
+  </article>
+
+  <article class="step" id="vae-map">
+    <h3><span class="step-num">3.3</span> Пространство кодов, из которого можно сэмплировать</h3>
+    <p>Слагаемое KL упаковывает все коды в круг априорного распределения радиусом около 2,5 — у АЭ разброс около 30. Соседние облака при обучении перекрываются,
+      поэтому декодеру приходится осмысленно заполнять пространство между ними. Переключайтесь между моделями, показывайте, что декодер рисует повсюду, и генерируйте
+      новые цифры. VAE берёт <span class="tex" data-tex="z\sim\mathcal N(0,I)">z ~ N(0, I)</span>; у АЭ априорного распределения нет, поэтому он берёт точки
+      равномерно из своего прямоугольника.</p>
+    <div class="viz" id="viz-vae-map"></div>
+    <p>Под априорным распределением VAE каждой цифре принадлежит около 10% территории. Цена — <b>размытость</b>: перекрывающиеся облака приучают декодер усреднять
+      соседей. (В ноутбуке 01 классификатор цифр уверен лишь в 31% сэмплов VAE против 58% у АЭ.)</p>
+  </article>
+
+  <article class="step" id="vae-beta">
+    <h3><span class="step-num">3.4</span> Ручка β</h3>
+    <p>Вес <span class="tex" data-tex="\beta">β</span> при слагаемом KL задаёт компромисс (Higgins et al., 2017). Малое β: чёткие реконструкции, коды разбегаются, модель
+      возвращается к обычному АЭ. Большое β: коды прижаты к априорному распределению, изображения размыты. Слишком большое: дешевле всего вообще игнорировать вход.
+      Все облака схлопываются в априорное распределение, KL = 0, а декодер рисует одну «среднюю» цифру. Это называется <b>коллапсом апостериорного распределения</b>.</p>
+    <div class="viz" id="viz-beta"></div>
+  </article>
+
+  <article class="step" id="vae-interp">
+    <h3><span class="step-num">3.5</span> Прогулка между двумя цифрами</h3>
+    <p>Пройдём по прямой между кодами двух изображений и декодируем по пути. Оба пути пересекают территорию других цифр — прямой на плоскости больше
+      некуда деться. У VAE кадры меняются равномернее, потому что его коды распределены равномернее.</p>
+    <div class="viz" id="viz-interp"></div>
+  </article>
+</section>
+
+<!-- ───────────────────────── 4. Статья ───────────────────────── -->
+<section class="stage interlude" id="s-paper">
+  <header class="stage-head">
+    <span class="stage-num">4</span>
+    <div>
+      <h2>Что показала статья <small>Zeng, Chen, Zhang &amp; Xu · AAAI 2023</small></h2>
+      <p>С 2019 по 2022 год серия трансформеров (LogTrans, Informer, Autoformer, Pyraformer, FEDformer) сообщала о большом прогрессе в <b>долгосрочном
+        прогнозировании временных рядов</b>. Статья <a href="https://arxiv.org/abs/2205.13504" target="_blank" rel="noopener"><i>Are Transformers Effective for Time Series Forecasting?</i></a>
+        поставила их рядом с одним линейным слоем — и линейный слой победил.</p>
+    </div>
+  </header>
+
+  <article class="step" id="p-task">
+    <h3><span class="step-num">4.1</span> Задача и до неприличия простой бейзлайн <a class="code" href="https://github.com/cure-lab/LTSF-Linear" target="_blank" rel="noopener">LTSF-Linear</a></h3>
+    <p>По последним <span class="tex" data-tex="L">L</span> значениям ряда предсказать следующие <span class="tex" data-tex="T">T</span> (от 96 до 720 часов на часовых данных).
+      LTSF-Linear предсказывает все <span class="tex" data-tex="T">T</span> шагов сразу (<b>прямой многошаговый прогноз</b>, DMS) одной матрицей, общей для всех переменных
+      (<b>независимость каналов</b>):</p>
+    <div class="flow" aria-hidden="true">
+      <span class="node">прошлое <span class="tex" data-tex="x">x</span><small>L = 336</small></span><span class="op">→</span>
+      <span class="node accent">одна матрица <span class="tex" data-tex="W">W</span><small>T × L</small></span><span class="op">→</span>
+      <span class="node">будущее <span class="tex" data-tex="\hat y">ŷ</span><small>T = 96…720</small></span>
+    </div>
+    <div class="formula"><span class="tex" data-tex="\textbf{Linear: } \hat y = W x + b \qquad \textbf{NLinear: } \hat y = W(x - x_L) + b + x_L \qquad \textbf{DLinear: } \hat y = W_s\,(x - \mathrm{MA}_{25}x) + W_t\,\mathrm{MA}_{25}x">Linear, NLinear, DLinear</span></div>
+    <p><b>NLinear</b> вычитает последнее значение и потом прибавляет его обратно — это делает модель устойчивой к сдвигам уровня между обучением и тестом. <b>DLinear</b> делит
+      окно на тренд (скользящее среднее по 25 шагам) и остаток, по матрице на каждую часть. Довод статьи, почему это может обыграть внимание: self-attention
+      <em>инвариантно к перестановкам</em>, и порядок попадает в модель только через позиционные эмбеддинги. Отдельное число во временном ряду почти ничего не значит само
+      по себе — информация в основном в порядке.</p>
+  </article>
+
+  <article class="step" id="p-table">
+    <h3><span class="step-num">4.2</span> Таблица 2, которую можно исследовать</h3>
+    <p>Главные результаты статьи на девяти бенчмарках. Выберите датасет и горизонт. Синие полосы — три модели LTSF-Linear, серые — пять трансформеров
+      и наивный <i>Repeat</i> (повторить последнее значение).</p>
+    <div class="viz" id="viz-paper"></div>
+    <p class="note">Числа взяты из таблицы 2 статьи: многомерный прогноз, ошибки на стандартизованных данных. Трансформеры используют <span class="tex" data-tex="L = 96">L = 96</span>,
+      свою лучшую настройку по данным статьи; LTSF-Linear — <span class="tex" data-tex="L = 336">L = 336</span>. «Улучшение» — столбец IMP. из статьи: лучшая линейная модель против лучшего трансформера.</p>
+    <p>Статья подкрепляет это диагностикой. Трансформеры <b>не</b> улучшаются с ростом окна истории, а линейные модели улучшаются. Если шаг за шагом превращать Informer
+      в линейную модель, он <b>улучшается</b> (ETTh1: 0,865 → 0,400). <b>Перемешивание</b> входного окна почти не меняет ошибку Informer, а у Linear она растёт в среднем
+      по горизонтам на 81%: Linear действительно использует порядок. Часть 5 проводит ту же диагностику для автоэнкодера.</p>
+  </article>
+
+  <article class="step" id="p-linear">
+    <h3><span class="step-num">4.3</span> Чему учится один линейный слой</h3>
+    <p>NLinear, обученный на <b>ETTh1</b> (почасовая нагрузка и температура масла силового трансформатора; <span class="tex" data-tex="L = 336">L = 336</span> часов,
+      <span class="tex" data-tex="T = 96">T = 96</span>; MSE на тесте <span id="nl-mse">0,378</span>, в статье 0,374). Строка <span class="tex" data-tex="h">h</span> матрицы <span class="tex" data-tex="W">W</span> — это веса,
+      с которыми каждый из 336 прошлых часов входит в прогноз на <span class="tex" data-tex="h">h</span> часов вперёд. Наведите, чтобы прочитать вес; щёлкните по строке, чтобы построить её график.</p>
+    <div class="viz" id="viz-linear"></div>
+    <p>Диагональные полосы через каждые 24 часа — та же картина, что на рис. 7 статьи: чтобы предсказать час <span class="tex" data-tex="t+h">t + h</span>, смотри на тот же час
+      в предыдущие дни. Здесь 32 256 свободных весов. Часть 5 выясняет, сколько из них прогнозу на самом деле нужно.</p>
+  </article>
+</section>
+
+<!-- ───────────────────────── 5. АЭ-прогнозист ───────────────────────── -->
+<section class="stage" id="s-forecast">
+  <header class="stage-head">
+    <span class="stage-num">5</span>
+    <div>
+      <h2>Автоэнкодер, который прогнозирует</h2>
+      <p>Запишем линейное отображение как произведение <span class="tex" data-tex="W = D\,E">W = D E</span>. Энкодер <span class="tex" data-tex="E">E</span> (k × 336) сжимает прошлое в
+        <span class="tex" data-tex="k">k</span> чисел, декодер <span class="tex" data-tex="D">D</span> (96 × k) разворачивает их в будущее. Это автоэнкодер, декодер которого
+        восстанавливает не прошлое, а <b>будущее</b>. Он сохраняет все уроки статьи: прогноз сразу на все шаги (DMS), одна модель на все переменные, нормализация NLinear
+        и линейный энкодер, чувствительный к порядку.</p>
+    </div>
+  </header>
+
+  <article class="step" id="f-lowrank">
+    <h3><span class="step-num">5.1</span> Сколько чисел нужно прошлому?</h3>
+    <div class="formula"><span class="tex" data-tex="z = E\,(x - x_L) + b_E \in \mathbb R^k, \qquad \hat y = D\,z + b_D + x_L \in \mathbb R^{96}">z = E (x − x_L) + b_E, ŷ = D z + b_D + x_L</span></div>
+    <p>Каждая модель ниже обучена на ETTh1 целиком, с размером горлышка <span class="tex" data-tex="k">k</span> (ноутбук 02). Выберите <span class="tex" data-tex="k">k</span>,
+      чтобы увидеть произведение <span class="tex" data-tex="D\,E">DE</span> рядом с кривой ошибки.</p>
+    <div class="viz" id="viz-lowrank"></div>
+    <p>Начиная с <span class="tex" data-tex="k = 8">k = 8</span> автоэнкодер не уступает NLinear на тестовых месяцах — с 3 560 параметрами вместо 32 352. Если же обрезать
+      собственную <span class="tex" data-tex="W">W</span> модели NLinear до ранга 8 <em>после</em> обучения, получится намного хуже (MSE 0,41; ноутбук 02, §4.1). Модель, обученная
+      с горлышком, тратит свои немногие направления на то, что предсказывает будущее. NLinear тратит лишний ранг на детали, которые подходят к обучающим месяцам, но не помогают на тестовых.</p>
+  </article>
+
+  <article class="step" id="f-window">
+    <h3><span class="step-num">5.2</span> Настоящий прогноз по частям</h3>
+    <p>С линейным декодером прогноз — буквально сумма <span class="tex" data-tex="k">k</span> кривых, столбцов <span class="tex" data-tex="d_j">d_j</span> матрицы
+      <span class="tex" data-tex="D">D</span>, каждая со своим множителем-кодом <span class="tex" data-tex="z_j">z_j</span>:</p>
+    <div class="formula"><span class="tex" data-tex="\hat y = x_L + b_D + \sum_{j=1}^{k} z_j\, d_j">ŷ = x_L + b_D + Σ z_j d_j</span></div>
+    <p>Выберите переменную и пройдитесь по четырём тестовым месяцам. Карточки под графиком — слагаемые <span class="tex" data-tex="z_j d_j">z_j d_j</span>, от крупных к мелким.
+      Наведите на карточку, чтобы увидеть её на графике.</p>
+    <div class="viz" id="viz-window"></div>
+  </article>
+
+  <article class="step" id="f-order">
+    <h3><span class="step-num">5.3</span> Использует ли он порядок прошлого?</h3>
+    <p>Тест из таблицы 5 статьи: перемешать входное окно и посмотреть, заметит ли это прогноз. Модель, которая читает временной порядок, обязана ухудшиться.
+      В статье (ETTh1, <span class="tex" data-tex="T = 96">T = 96</span>) ошибка Informer почти не сдвинулась, а у Linear выросла больше чем вдвое.</p>
+    <div class="viz" id="viz-order"></div>
+  </article>
+
+  <article class="step" id="f-lab">
+    <h3><span class="step-num">5.4</span> Обучите сами</h3>
+    <p>Сконструируйте синтетический часовой ряд и обучите на нём прогнозирующий автоэнкодер прямо сейчас (<span class="tex" data-tex="L = 168">L = 168</span>, <span class="tex" data-tex="T = 48">T = 48</span>, нормализация NLinear, Adam).
+      Ориентир — лучшее <b>полное</b> линейное отображение (метод наименьших квадратов, любой ранг). Чистому суточному синусу хватает <span class="tex" data-tex="k = 2">k = 2</span>:
+      любая синусоида с периодом 24 часа — смесь одного синуса и одного косинуса. Добавьте недельный цикл — и понадобится около 4. Тренд и сдвиги уровня
+      берёт на себя нормализация. Смотрите, как кривые декодера превращаются в собственные ритмы ряда.</p>
+    <div class="viz" id="viz-lab"></div>
+  </article>
+</section>
+
+<!-- ───────────────────────── 6. CVAE ───────────────────────── -->
+<section class="stage" id="s-cvae">
+  <header class="stage-head">
+    <span class="stage-num">6</span>
+    <div>
+      <h2>Прогноз с неопределённостью: условный VAE</h2>
+      <p>Точечный прогноз ничего не говорит о том, насколько модель уверена. Это добавляет вариационная половина части 3. <b>Условный VAE</b> (Sohn et al., 2015)
+        учит распределение вариантов будущего при заданном прошлом. Сэмплируя его, получаем много прогнозов, и их разброс и есть неопределённость.</p>
+    </div>
+  </header>
+
+  <article class="step" id="c-model">
+    <h3><span class="step-num">6.1</span> Модель: линейный АЭ плюс выученные отклонения</h3>
+    <div class="formula"><span class="tex" data-tex="\hat y(z) = \underbrace{x_L + D\,E\,(x - x_L)}_{\text{линейный АЭ, часть 5}} + \underbrace{U z}_{\text{моды отклонений}}, \qquad z \sim p_\psi(z \mid x) = \mathcal N\big(\mu_p(x), \sigma_p^2(x)\big), \qquad y \sim \mathcal N\big(\hat y(z), \operatorname{diag}\sigma_t^2\big)">ŷ(z) = линейный АЭ + U z</span></div>
+    <p><b>Априорная сеть</b> читает прошлое и говорит, насколько неопределённо это окно. При обучении <b>апостериорная сеть</b> видит ещё и настоящее будущее и кодирует,
+      какое отклонение произошло на самом деле. Как и в части 3, потери — это реконструкция плюс KL между апостериорным и априорным распределениями. Чтобы сделать прогноз,
+      берём <span class="tex" data-tex="z">z</span> из априорного распределения, декодируем и добавляем почасовой шум <span class="tex" data-tex="\sigma_t">σ_t</span>.
+      Поскольку <span class="tex" data-tex="Uz">Uz</span> сдвигает все 96 часов сразу, каждый сэмпл — цельный альтернативный вариант будущего (день потеплее, спад пораньше),
+      а не независимый шум в каждом часе.</p>
+  </article>
+
+  <article class="step" id="c-fan">
+    <h3><span class="step-num">6.2</span> Много вариантов будущего</h3>
+    <p>Полосы показывают центральные 50% и 80% сэмплированных вариантов будущего. Тонкие линии — сэмплированные траектории без почасового шума. Нажмите <b>Сэмплировать заново</b>, чтобы вытянуть новые.</p>
+    <div class="viz" id="viz-fan"></div>
+    <p>На всех 19 495 тестовых окнах (ноутбук 02, §8) 80%-я полоса CVAE на треть уже обычных «полос ошибок по остаткам», по-прежнему накрывает больше 80% истинных значений
+      и даёт на 10% меньший CRPS. К тому же её ширина меняется от окна к окну, чего фиксированная полоса по остаткам не умеет.</p>
+  </article>
+</section>
+
+</main>
+
+<footer class="footer">
+  <p>Ноутбуки: <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/01_autoencoders_and_vae.ipynb" target="_blank" rel="noopener">01 · Автоэнкодеры и VAE с нуля</a> ·
+    <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/02_autoencoders_for_time_series_forecasting.ipynb" target="_blank" rel="noopener">02 · Автоэнкодеры для прогнозирования временных рядов</a> (на английском).
+    Модели этой страницы экспортированы скриптом <code>tools/build_assets.py</code> по тем же рецептам, а <code>tools/check.mjs</code> сверяет вычисления страницы с PyTorch.</p>
+  <p>Статья: A. Zeng, M. Chen, L. Zhang, Q. Xu, <a href="https://arxiv.org/abs/2205.13504" target="_blank" rel="noopener"><i>Are Transformers Effective for Time Series Forecasting?</i></a>, AAAI 2023.
+    Данные: <a href="https://github.com/zhouhaoyi/ETDataset" target="_blank" rel="noopener">ETDataset</a> (ETTh1, CC BY-ND 4.0) и digits из scikit-learn (UCI optical recognition of handwritten digits).</p>
+  <p>Исходники: <a href="https://github.com/D2718281828nis/ML-Transformers/tree/main/explainer/autoencoders" target="_blank" rel="noopener">explainer/autoencoders/</a> в D2718281828nis/ML-Transformers ·
+    см. также <a href="../../ru/">эмбеддинги и внимание GPT-2 наглядно</a>.</p>
+</footer>
+
+<div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+</body>
+</html>

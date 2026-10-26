@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autoencoder Explainer</title>
+  <meta name="description" content="Autoencoders and variational autoencoders, from a 2-D toy trained live to handwritten digits, then into time-series forecasting through 'Are Transformers Effective for Time Series Forecasting?'. Computed in your browser.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="alternate" hreflang="en" href="https://d2718281828nis.github.io/ML-Transformers/autoencoders/">
+  <link rel="alternate" hreflang="ru" href="https://d2718281828nis.github.io/ML-Transformers/autoencoders/ru/">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234338ca'/%3E%3Cpath d='M6 8h6l3 8-3 8H6zM26 8h-6l-3 8 3 8h6z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <script async id="katex-js" src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+
+<div class="file-warning" id="file-warning" hidden>
+  <b>The interactive parts can't run here.</b> This page was opened as a local file (<code>file://</code>), and browsers block its scripts in that mode.
+  Serve the folder instead: run <code>python3 -m http.server 8000</code> inside <code>explainer/</code> and open
+  <a href="http://localhost:8000/autoencoders/">http://localhost:8000/autoencoders/</a>, or use the <a href="https://d2718281828nis.github.io/ML-Transformers/autoencoders/">published page</a>.
+</div>
+<script>if (location.protocol === "file:") document.getElementById("file-warning").hidden = false;</script>
+
+<header class="topbar" id="top">
+  <div class="topbar-inner">
+    <a class="brand" href="#">Autoencoder <span>Explainer</span></a>
+    <nav class="pipeline" id="pipeline" aria-label="Sections">
+      <a href="#ae-toy">AE</a><a href="#dg-map">digits</a>
+      <span class="arrow">→</span>
+      <a href="#vae-elbo">VAE</a><a href="#vae-beta">β</a>
+      <span class="arrow">→</span>
+      <a href="#p-table">paper</a><a href="#p-linear">W</a>
+      <span class="arrow">→</span>
+      <a href="#f-lowrank">W = D·E</a><a href="#f-window">forecast</a><a href="#f-lab">lab</a>
+      <span class="arrow">→</span>
+      <a href="#c-fan">CVAE</a>
+    </nav>
+    <a class="top-link" href="../" title="The GPT-2 embedding &amp; attention explainer">GPT-2 explainer</a>
+    <a class="lang-switch" id="lang-switch" href="ru/" hreflang="ru" lang="ru" title="Русская версия">RU</a>
+  </div>
+</header>
+
+<main>
+
+<section class="hero">
+  <p class="kicker">Autoencoders · VAEs · LTSF-Linear · computed in your browser</p>
+  <h1>Squeeze, rebuild, forecast</h1>
+  <p class="lede">
+    An <em>autoencoder</em> squeezes data through a narrow bottleneck and rebuilds it on the other side. This page builds the idea up
+    from a 2-D toy that trains live, to handwritten digits, to the <em>variational</em> autoencoder you can sample from. Then it follows
+    the idea into time-series forecasting, through the paper <a href="https://arxiv.org/abs/2205.13504" target="_blank" rel="noopener">Are Transformers
+    Effective for Time Series Forecasting?</a>. There, a single linear layer turns out to be an autoencoder in disguise.
+  </p>
+  <nav class="map" aria-label="Parts">
+    <a href="#s-ae"><b><i>1</i>Autoencoders</b><span>2-D points through a 1-number bottleneck, trained live</span></a>
+    <a href="#s-digits"><b><i>2</i>Digits</b><span>explore a 2-number code space, draw your own digit</span></a>
+    <a href="#s-vae"><b><i>3</i>Variational AE</b><span>clouds instead of points, the KL term, the β knob</span></a>
+    <a href="#s-paper"><b><i>4</i>The paper</b><span>one linear layer vs. five Transformers</span></a>
+    <a href="#s-forecast"><b><i>5</i>AE forecaster</b><span>the linear map as encoder + decoder; train one yourself</span></a>
+    <a href="#s-cvae"><b><i>6</i>Uncertainty</b><span>a conditional VAE draws many futures</span></a>
+  </nav>
+  <ul class="howto">
+    <li><b>Hover</b> charts to read values. Every control re-computes right away: the toy models train in your browser, and the digit and
+      forecasting models (trained in the companion <a href="https://github.com/D2718281828nis/ML-Transformers/tree/main/notebooks/autoencoders" target="_blank" rel="noopener">notebooks</a>)
+      run here as plain JavaScript.</li>
+    <li>Signed weights are drawn <span class="legend"><span class="bar" style="width:60px;background:linear-gradient(to right, rgb(var(--c-neg)), rgb(var(--c-mid)), rgb(var(--c-pos)))"></span></span>
+      from negative (blue) through zero (gray) to positive (red).</li>
+  </ul>
+</section>
+
+<!-- ───────────────────────── 1. Autoencoders ───────────────────────── -->
+<section class="stage" id="s-ae">
+  <header class="stage-head">
+    <span class="stage-num">1</span>
+    <div>
+      <h2>Autoencoders: squeeze, then rebuild</h2>
+      <p>An autoencoder is two networks trained as one. The <b>encoder</b> squeezes an input into a short <b>code</b>; the <b>decoder</b>
+        rebuilds the input from that code. Nobody tells the network what the code should mean. Because the middle is narrow, the only way to
+        rebuild the input well is to keep what varies most across the data and drop the rest.</p>
+    </div>
+  </header>
+
+  <article class="step" id="ae-idea">
+    <h3><span class="step-num">1.1</span> Encoder, bottleneck, decoder</h3>
+    <div class="flow" aria-hidden="true">
+      <span class="node">input <span class="tex" data-tex="x">x</span><small>d numbers</small></span><span class="op">→</span>
+      <span class="node">encoder <span class="tex" data-tex="f_\phi">f</span></span><span class="op">→</span>
+      <span class="node accent narrow">code <span class="tex" data-tex="z">z</span><small>k &lt; d</small></span><span class="op">→</span>
+      <span class="node">decoder <span class="tex" data-tex="g_\theta">g</span></span><span class="op">→</span>
+      <span class="node">rebuilt <span class="tex" data-tex="\hat x">x̂</span><small>d numbers</small></span>
+    </div>
+    <div class="formula"><span class="tex" data-tex="z = f_\phi(x), \qquad \hat x = g_\theta(z), \qquad \mathcal{L}(\phi,\theta) = \frac1N \sum_{i=1}^{N} \big\lVert x_i - g_\theta\big(f_\phi(x_i)\big)\big\rVert^2">z = f(x), x̂ = g(z), L = mean ‖x − g(f(x))‖²</span></div>
+    <p>That one idea has many uses: <b>compression</b> (store <span class="tex" data-tex="z">z</span>), <b>features</b> for another model,
+      <b>denoising</b> (feed a noisy input, ask for the clean one), and <b>anomaly detection</b>: an input unlike the training data comes back badly rebuilt.
+      In part 5 the same shape becomes a forecaster.</p>
+  </article>
+
+  <article class="step" id="ae-toy">
+    <h3><span class="step-num">1.2</span> Live: 2-D points through a one-number bottleneck</h3>
+    <p>Each point has two coordinates; the code has one. Press <b>Train</b> and watch encoder and decoder learn together. The blue curve is
+      <em>everything the decoder can draw</em>, and every reconstruction (orange) has to land on it. A <b>linear</b> autoencoder can only draw a
+      straight line. A <b>nonlinear</b> one (two hidden layers of 24 tanh units on each side) can bend it to follow the data.</p>
+    <div class="viz" id="viz-toy"></div>
+    <div class="callout"><p><b>A linear autoencoder is PCA.</b> Trained on squared error, a linear AE with <span class="tex" data-tex="k">k</span> codes spans the same
+      subspace as the top <span class="tex" data-tex="k">k</span> principal components (Baldi &amp; Hornik, 1989). On the <i>cloud</i> preset its error settles on
+      PCA's, shown next to it. On the <i>arc</i> and <i>wave</i> no straight line can do well, but the nonlinear AE can.</p></div>
+    <p>The strip under the plot shows each point's code. When the nonlinear AE has learned the arc, the colors run in order along the strip: it has
+      <em>unrolled</em> the curve, and the code means "how far along the arc". That is the general picture. Data that looks high-dimensional often lies
+      near a lower-dimensional surface; the encoder learns coordinates on that surface, and the decoder learns to draw it.</p>
+  </article>
+</section>
+
+<!-- ───────────────────────── 2. Digits ───────────────────────── -->
+<section class="stage" id="s-digits">
+  <header class="stage-head">
+    <span class="stage-num">2</span>
+    <div>
+      <h2>An autoencoder for handwritten digits</h2>
+      <p>Now real data: 1,797 handwritten digits of 8 × 8 pixels (scikit-learn's <code>digits</code>). The encoder (64 → 128 → 2) squeezes each image
+        into <b>two</b> numbers, so every image becomes a point in a plane we can look at. The decoder (2 → 128 → 64) turns any point of that plane
+        back into an image. The networks were trained in <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/01_autoencoders_and_vae.ipynb" target="_blank" rel="noopener">notebook 01</a>
+        and run here.</p>
+    </div>
+  </header>
+
+  <article class="step" id="dg-map">
+    <h3><span class="step-num">2.1</span> Every image becomes two numbers</h3>
+    <p>Each image is drawn as its own digit, at its code. The encoder never saw a label, yet the digits sort themselves into regions, with look-alikes
+      (3, 5, 8, 9) next to each other. <b>Hover</b> a point to compare the image with its reconstruction from just two numbers. Move into empty
+      space and the decoder shows what that point means to it.</p>
+    <div class="viz" id="viz-dg-map"></div>
+  </article>
+
+  <article class="step" id="dg-draw">
+    <h3><span class="step-num">2.2</span> Draw a digit</h3>
+    <p>Paint on the 8 × 8 grid, or start from a real test image and change it. Your drawing is encoded on every stroke. See where it lands and how
+      much of it survives the two-number bottleneck.</p>
+    <div class="viz" id="viz-dg-draw"></div>
+  </article>
+
+  <article class="step" id="dg-holes">
+    <h3><span class="step-num">2.3</span> What the decoder draws everywhere</h3>
+    <p>Decode a regular grid of points across the region where the codes live. On data this small the decoder extrapolates gracefully: almost every cell
+      still looks like some digit. The problems are in the <b>layout</b>. The codes have no fixed scale or center, and the digits get very uneven territory.
+      Draw points uniformly in the box and ask which digit owns the nearest code:</p>
+    <div class="viz" id="viz-dg-grid"></div>
+    <p>So a plain autoencoder gives a good <b>encoder</b>, not a <b>generator</b>. Nothing says which distribution to draw <span class="tex" data-tex="z">z</span> from,
+      and nothing constrains the decoder where no code ever landed. On richer data (faces, sounds) those regions usually decode to garbage.</p>
+  </article>
+</section>
+
+<!-- ───────────────────────── 3. VAE ───────────────────────── -->
+<section class="stage" id="s-vae">
+  <header class="stage-head">
+    <span class="stage-num">3</span>
+    <div>
+      <h2>Variational autoencoder: from points to clouds</h2>
+      <p>Kingma &amp; Welling (2014) turned the autoencoder into a probabilistic model you can sample from: draw a code from a fixed prior, decode it.
+        To make that work, the encoder stops returning a point and returns a small Gaussian <b>cloud</b>, and a second loss term keeps every cloud close to the prior.</p>
+    </div>
+  </header>
+
+  <article class="step" id="vae-elbo">
+    <h3><span class="step-num">3.1</span> The objective: rebuild well, stay close to the prior</h3>
+    <p><b>The generative story.</b> First a code, then an image:</p>
+    <div class="formula"><span class="tex" data-tex="z \sim p(z) = \mathcal N(0, I), \qquad x \sim p_\theta(x \mid z) = \textstyle\prod_{j=1}^{64} \mathrm{Bernoulli}\big(x_j;\ \sigma(g_\theta(z))_j\big)">z ~ N(0, I), x ~ p(x | z)</span></div>
+    <p>Fitting it means maximizing <span class="tex" data-tex="\log p_\theta(x) = \log\int p_\theta(x\mid z)\,p(z)\,dz">log p(x)</span>, an integral over every possible code.
+      The encoder proposes where to look: <span class="tex" data-tex="q_\phi(z\mid x) = \mathcal N\big(\mu_\phi(x), \operatorname{diag}\sigma^2_\phi(x)\big)">q(z | x) = N(μ, σ²)</span>.
+      For any such <span class="tex" data-tex="q">q</span>, the log-likelihood is bounded below by the <b>ELBO</b> (evidence lower bound), and its negative is the loss:</p>
+    <div class="formula"><span class="tex" data-tex="\mathcal L(x) = \underbrace{-\,\mathbb E_{q_\phi(z\mid x)}\big[\log p_\theta(x\mid z)\big]}_{\text{reconstruction}} \;+\; \beta\,\underbrace{\mathrm{KL}\big(q_\phi(z\mid x)\,\|\,\mathcal N(0,I)\big)}_{\frac12\sum_j \left(\mu_j^2 + \sigma_j^2 - \ln\sigma_j^2 - 1\right)}, \qquad \beta = 1">L = reconstruction + β · KL</span></div>
+    <p>The reconstruction term is the autoencoder's loss. The <b>KL</b> term is the price of each cloud's distance from the prior. It is zero only when
+      <span class="tex" data-tex="\mu = 0">μ = 0</span> and <span class="tex" data-tex="\sigma = 1">σ = 1</span>, that is, when the code says nothing about the input.
+      Try it for one latent dimension:</p>
+    <div class="viz" id="viz-kl"></div>
+  </article>
+
+  <article class="step" id="vae-cloud">
+    <h3><span class="step-num">3.2</span> Sampling a code: the reparameterization trick</h3>
+    <p>Backpropagation can't pass through "draw a random sample". The trick is to write the sample as a deterministic function of the encoder's outputs
+      plus outside noise, so that gradients reach <span class="tex" data-tex="\mu">μ</span> and <span class="tex" data-tex="\sigma">σ</span>:</p>
+    <div class="formula"><span class="tex" data-tex="z = \mu_\phi(x) + \sigma_\phi(x)\odot\varepsilon, \qquad \varepsilon\sim\mathcal N(0, I)">z = μ + σ ⊙ ε</span></div>
+    <p><b>Click</b> an image in the VAE's code space (trained with β = 1). Its cloud is drawn as an ellipse at <span class="tex" data-tex="\mu \pm 2\sigma">μ ± 2σ</span>.
+      <b>Draw ε</b> to sample codes inside it: each decodes to a slightly different version of the image.</p>
+    <div class="viz" id="viz-vae-cloud"></div>
+  </article>
+
+  <article class="step" id="vae-map">
+    <h3><span class="step-num">3.3</span> A code space you can sample</h3>
+    <p>The KL term packs all codes into the prior's disk, about radius 2.5 against a span of about 30 for the AE. Because neighbouring clouds overlap
+      during training, the decoder has to make sense of the space between them. Switch between the two models, show what the decoder draws
+      everywhere, and generate new digits. The VAE samples <span class="tex" data-tex="z\sim\mathcal N(0,I)">z ~ N(0, I)</span>; the AE, which has no prior,
+      samples uniformly from its box.</p>
+    <div class="viz" id="viz-vae-map"></div>
+    <p>Under the VAE's prior every digit owns close to 10% of the territory. The price is <b>blur</b>: overlapping clouds teach the decoder to average
+      between neighbours. (In notebook 01, a digit classifier is confident about 31% of VAE samples against 58% of the AE's.)</p>
+  </article>
+
+  <article class="step" id="vae-beta">
+    <h3><span class="step-num">3.4</span> The β knob</h3>
+    <p>The weight <span class="tex" data-tex="\beta">β</span> on the KL term sets the trade-off (Higgins et al., 2017). Small β: sharp reconstructions, codes spread out,
+      back towards a plain AE. Large β: codes squeezed onto the prior, blurry images. Too large: the cheapest solution is to ignore the input. Every
+      cloud collapses onto the prior, KL = 0, and the decoder draws one average digit. This failure is called <b>posterior collapse</b>.</p>
+    <div class="viz" id="viz-beta"></div>
+  </article>
+
+  <article class="step" id="vae-interp">
+    <h3><span class="step-num">3.5</span> Walking between two digits</h3>
+    <p>Walk in a straight line between the codes of two images and decode along the way. Both paths cross other digits' territory, because a straight line
+      in a 2-D plane has nowhere else to go. The VAE's frames change more evenly, because its codes are spread out more evenly.</p>
+    <div class="viz" id="viz-interp"></div>
+  </article>
+</section>
+
+<!-- ───────────────────────── 4. The paper ───────────────────────── -->
+<section class="stage interlude" id="s-paper">
+  <header class="stage-head">
+    <span class="stage-num">4</span>
+    <div>
+      <h2>What the paper found <small>Zeng, Chen, Zhang &amp; Xu · AAAI 2023</small></h2>
+      <p>Between 2019 and 2022 a series of Transformers (LogTrans, Informer, Autoformer, Pyraformer, FEDformer) reported big gains in <b>long-term
+        time-series forecasting</b>. <a href="https://arxiv.org/abs/2205.13504" target="_blank" rel="noopener"><i>Are Transformers Effective for Time Series Forecasting?</i></a>
+        put them next to a single linear layer, and the linear layer won.</p>
+    </div>
+  </header>
+
+  <article class="step" id="p-task">
+    <h3><span class="step-num">4.1</span> The task, and an embarrassingly simple baseline <a class="code" href="https://github.com/cure-lab/LTSF-Linear" target="_blank" rel="noopener">LTSF-Linear</a></h3>
+    <p>Given the last <span class="tex" data-tex="L">L</span> values of a series, predict the next <span class="tex" data-tex="T">T</span> (96 to 720 hours on hourly data).
+      LTSF-Linear predicts all <span class="tex" data-tex="T">T</span> steps at once (<b>direct multi-step</b>, DMS) with one matrix, shared by every variable
+      (<b>channel independence</b>):</p>
+    <div class="flow" aria-hidden="true">
+      <span class="node">past <span class="tex" data-tex="x">x</span><small>L = 336</small></span><span class="op">→</span>
+      <span class="node accent">one matrix <span class="tex" data-tex="W">W</span><small>T × L</small></span><span class="op">→</span>
+      <span class="node">future <span class="tex" data-tex="\hat y">ŷ</span><small>T = 96…720</small></span>
+    </div>
+    <div class="formula"><span class="tex" data-tex="\textbf{Linear: } \hat y = W x + b \qquad \textbf{NLinear: } \hat y = W(x - x_L) + b + x_L \qquad \textbf{DLinear: } \hat y = W_s\,(x - \mathrm{MA}_{25}x) + W_t\,\mathrm{MA}_{25}x">Linear, NLinear, DLinear</span></div>
+    <p><b>NLinear</b> subtracts the last value and adds it back, which makes it robust to level shifts between training and test data. <b>DLinear</b> splits the window
+      into a trend (25-step moving average) and a remainder, with one matrix for each. The paper's argument for why this can beat attention: self-attention is
+      <em>permutation-invariant</em>, so order only enters through positional embeddings. A single number in a series carries little meaning on its own; the
+      information is mostly in the order.</p>
+  </article>
+
+  <article class="step" id="p-table">
+    <h3><span class="step-num">4.2</span> Table 2, explorable</h3>
+    <p>The paper's main results on nine benchmarks. Pick a dataset and a horizon. Blue bars are the three LTSF-Linear models, gray bars the five Transformers
+      and the naive <i>Repeat</i> (repeat the last value).</p>
+    <div class="viz" id="viz-paper"></div>
+    <p class="note">Numbers are copied from the paper's Table 2: multivariate forecasting, errors on standardized data. Transformers use <span class="tex" data-tex="L = 96">L = 96</span>,
+      their best setting according to the paper; LTSF-Linear uses <span class="tex" data-tex="L = 336">L = 336</span>. "Improvement" is the paper's IMP. column: best linear model vs best Transformer.</p>
+    <p>The paper backs this up with diagnostics. Transformers do <b>not</b> get better with a longer look-back window, while linear models do. Turning Informer
+      step by step into a linear model <b>improves</b> it (ETTh1: 0.865 → 0.400). <b>Shuffling</b> the input window barely changes Informer's error but raises Linear's by 81% on average over the horizons:
+      Linear really uses the order. Part 5 runs the same diagnostics on an autoencoder.</p>
+  </article>
+
+  <article class="step" id="p-linear">
+    <h3><span class="step-num">4.3</span> What one linear layer learns</h3>
+    <p>NLinear trained on <b>ETTh1</b> (hourly load and oil temperature of a power transformer; <span class="tex" data-tex="L = 336">L = 336</span> hours,
+      <span class="tex" data-tex="T = 96">T = 96</span>; test MSE <span id="nl-mse">0.378</span>, paper 0.374). Row <span class="tex" data-tex="h">h</span> of <span class="tex" data-tex="W">W</span> holds the
+      weights given to each of the 336 past hours when predicting <span class="tex" data-tex="h">h</span> hours ahead. Hover to read weights; click a row to plot it.</p>
+    <div class="viz" id="viz-linear"></div>
+    <p>The diagonal stripes, 24 hours apart, are the paper's Fig. 7 signature: to predict hour <span class="tex" data-tex="t+h">t + h</span>, look at the same
+      hour on previous days. That is 32,256 free weights. Part 5 asks how many of them the forecast really needs.</p>
+  </article>
+</section>
+
+<!-- ───────────────────────── 5. AE forecaster ───────────────────────── -->
+<section class="stage" id="s-forecast">
+  <header class="stage-head">
+    <span class="stage-num">5</span>
+    <div>
+      <h2>An autoencoder that forecasts</h2>
+      <p>Write the linear map as a product <span class="tex" data-tex="W = D\,E">W = D E</span>. An encoder <span class="tex" data-tex="E">E</span> (k × 336) squeezes the past into
+        <span class="tex" data-tex="k">k</span> numbers; a decoder <span class="tex" data-tex="D">D</span> (96 × k) expands them into the future. That is an autoencoder whose decoder
+        rebuilds the <b>future</b> instead of the past. It keeps every lesson of the paper: DMS output, one model shared by all variables, NLinear's normalization,
+        and an order-aware linear encoder.</p>
+    </div>
+  </header>
+
+  <article class="step" id="f-lowrank">
+    <h3><span class="step-num">5.1</span> How many numbers does the past need?</h3>
+    <div class="formula"><span class="tex" data-tex="z = E\,(x - x_L) + b_E \in \mathbb R^k, \qquad \hat y = D\,z + b_D + x_L \in \mathbb R^{96}">z = E (x − x_L) + b_E, ŷ = D z + b_D + x_L</span></div>
+    <p>Each model below was trained end to end on ETTh1 with bottleneck size <span class="tex" data-tex="k">k</span> (notebook 02). Pick <span class="tex" data-tex="k">k</span> to see the
+      product <span class="tex" data-tex="D\,E">DE</span> next to the error curve.</p>
+    <div class="viz" id="viz-lowrank"></div>
+    <p>From <span class="tex" data-tex="k = 8">k = 8</span> the autoencoder matches NLinear on the test months, with 3,560 parameters instead of 32,352. Cutting NLinear's own
+      <span class="tex" data-tex="W">W</span> down to rank 8 <em>after</em> training is much worse (MSE 0.41; notebook 02, §4.1). A model trained under the bottleneck puts its few
+      directions where they predict the future. NLinear spends its spare rank on detail that fits the training months but doesn't help on the test months.</p>
+  </article>
+
+  <article class="step" id="f-window">
+    <h3><span class="step-num">5.2</span> A real forecast, taken apart</h3>
+    <p>With a linear decoder the forecast is literally a sum of <span class="tex" data-tex="k">k</span> curves, the columns <span class="tex" data-tex="d_j">d_j</span> of
+      <span class="tex" data-tex="D">D</span>, each scaled by one code <span class="tex" data-tex="z_j">z_j</span>:</p>
+    <div class="formula"><span class="tex" data-tex="\hat y = x_L + b_D + \sum_{j=1}^{k} z_j\, d_j">ŷ = x_L + b_D + Σ z_j d_j</span></div>
+    <p>Pick a variable and slide through the four test months. The cards below the chart are the pieces <span class="tex" data-tex="z_j d_j">z_j d_j</span>, largest first.
+      Hover one to see it in the chart.</p>
+    <div class="viz" id="viz-window"></div>
+  </article>
+
+  <article class="step" id="f-order">
+    <h3><span class="step-num">5.3</span> Does it use the order of the past?</h3>
+    <p>The paper's Table 5 test: scramble the input window and see whether the forecast notices. A model that reads temporal order must get worse.
+      In the paper (ETTh1, <span class="tex" data-tex="T = 96">T = 96</span>), Informer's error barely moved while Linear's more than doubled.</p>
+    <div class="viz" id="viz-order"></div>
+  </article>
+
+  <article class="step" id="f-lab">
+    <h3><span class="step-num">5.4</span> Train one yourself</h3>
+    <p>Design a synthetic hourly series and train a forecasting autoencoder on it, live (<span class="tex" data-tex="L = 168">L = 168</span>, <span class="tex" data-tex="T = 48">T = 48</span>, NLinear normalization, Adam).
+      The reference is the best <b>full</b> linear map (least squares, any rank). A pure daily sine needs only <span class="tex" data-tex="k = 2">k = 2</span>:
+      every 24-hour sinusoid is a mix of one sine and one cosine. Add the weekly cycle and it needs about 4. Trend and level shifts are
+      handled by the normalization. Watch the decoder curves turn into the series' own rhythms.</p>
+    <div class="viz" id="viz-lab"></div>
+  </article>
+</section>
+
+<!-- ───────────────────────── 6. CVAE ───────────────────────── -->
+<section class="stage" id="s-cvae">
+  <header class="stage-head">
+    <span class="stage-num">6</span>
+    <div>
+      <h2>Forecasts with uncertainty: a conditional VAE</h2>
+      <p>A point forecast says nothing about how sure the model is. The variational half of part 3 adds that. A <b>conditional VAE</b> (Sohn et al., 2015)
+        learns a distribution of futures given the past. Sampling it gives many forecasts, and their spread is the uncertainty.</p>
+    </div>
+  </header>
+
+  <article class="step" id="c-model">
+    <h3><span class="step-num">6.1</span> The model: a linear AE plus learned deviations</h3>
+    <div class="formula"><span class="tex" data-tex="\hat y(z) = \underbrace{x_L + D\,E\,(x - x_L)}_{\text{linear AE, part 5}} + \underbrace{U z}_{\text{deviation modes}}, \qquad z \sim p_\psi(z \mid x) = \mathcal N\big(\mu_p(x), \sigma_p^2(x)\big), \qquad y \sim \mathcal N\big(\hat y(z), \operatorname{diag}\sigma_t^2\big)">ŷ(z) = linear AE + U z</span></div>
+    <p>The <b>prior network</b> reads the past and says how uncertain this window is. During training a <b>posterior network</b> also sees the real future
+      and encodes which deviation actually happened. As in part 3, the loss is reconstruction plus the KL between posterior and prior. To forecast,
+      draw <span class="tex" data-tex="z">z</span> from the prior, decode, and add the per-hour noise <span class="tex" data-tex="\sigma_t">σ_t</span>.
+      Because <span class="tex" data-tex="Uz">Uz</span> shifts all 96 hours together, each sample is a coherent alternative future (a warmer day, an earlier dip),
+      not independent noise at each hour.</p>
+  </article>
+
+  <article class="step" id="c-fan">
+    <h3><span class="step-num">6.2</span> Many futures</h3>
+    <p>Bands show the central 50% and 80% of the sampled futures. Thin lines are sampled trajectories without the per-hour noise. <b>Resample</b> to draw new ones.</p>
+    <div class="viz" id="viz-fan"></div>
+    <p>Measured on all 19,495 test windows (notebook 02, §8), the CVAE's 80% band is a third narrower than the usual "residual error bars", still covers more than
+      80% of the truth, and has 10% lower CRPS. Its width also changes from window to window, which a fixed residual band cannot do.</p>
+  </article>
+</section>
+
+</main>
+
+<footer class="footer">
+  <p>Companion notebooks: <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/01_autoencoders_and_vae.ipynb" target="_blank" rel="noopener">01 · Autoencoders and VAEs from scratch</a> ·
+    <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/02_autoencoders_for_time_series_forecasting.ipynb" target="_blank" rel="noopener">02 · Autoencoders for time-series forecasting</a>.
+    The models on this page were exported by <code>tools/build_assets.py</code> with the same recipes, and <code>tools/check.mjs</code> checks this page's math against PyTorch.</p>
+  <p>Paper: A. Zeng, M. Chen, L. Zhang, Q. Xu, <a href="https://arxiv.org/abs/2205.13504" target="_blank" rel="noopener"><i>Are Transformers Effective for Time Series Forecasting?</i></a>, AAAI 2023.
+    Data: <a href="https://github.com/zhouhaoyi/ETDataset" target="_blank" rel="noopener">ETDataset</a> (ETTh1, CC BY-ND 4.0) and scikit-learn's digits (UCI optical recognition of handwritten digits).</p>
+  <p>Source: <a href="https://github.com/D2718281828nis/ML-Transformers/tree/main/explainer/autoencoders" target="_blank" rel="noopener">explainer/autoencoders/</a> in D2718281828nis/ML-Transformers ·
+    see also the <a href="../">GPT-2 embedding &amp; attention explainer</a>.</p>
+</footer>
+
+<div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+</body>
+</html>
