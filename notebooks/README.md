@@ -23,6 +23,20 @@ If you wrote some notebook(s) leveraging 🤗 Transformers and would like to be 
 Pull Request so it can be included under the Community notebooks.
 
 
+## Notebooks in this fork
+
+These notebooks live in this repository, in [`autoencoders/`](autoencoders/). They come with an interactive page,
+the **[Autoencoder Explainer](https://d2718281828nis.github.io/ML-Transformers/autoencoders/)**
+([на русском](https://d2718281828nis.github.io/ML-Transformers/autoencoders/ru/)), which runs the same models in the browser.
+
+| Notebook     |      Description      |   |
+|:----------|:-------------|------:|
+| [01 · Autoencoders and VAEs from scratch](autoencoders/01_autoencoders_and_vae.ipynb) | How autoencoders (AE) and variational autoencoders (VAE) work, built in PyTorch on scikit-learn's 8×8 digits. A linear AE finds the PCA subspace; a nonlinear AE unrolls a curve. Covers the 2-number code space, why a plain AE is not a generator, the ELBO, the KL term and the reparameterization trick, the β trade-off and posterior collapse, and denoising and anomaly detection by reconstruction error. About 30 s on a CPU, no downloads. | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/01_autoencoders_and_vae.ipynb) |
+| [02 · Autoencoders for time-series forecasting](autoencoders/02_autoencoders_for_time_series_forecasting.ipynb) | Adapts autoencoders to long-term forecasting through [*Are Transformers Effective for Time Series Forecasting?*](https://arxiv.org/abs/2205.13504) (Zeng et al., AAAI 2023). It reproduces Repeat, Linear, NLinear and DLinear on ETTh1 (within 0.004 of the paper at T = 96). It then shows that the useful part of the linear map is low-rank: an encoder–decoder with a 16-number bottleneck ties NLinear at every horizon (96–720 h) with 5–14× fewer parameters. Also covers two-stage, multi-task and nonlinear AE variants, the paper's look-back and input-shuffling diagnostics, and a conditional VAE that gives sharper prediction intervals (CRPS −10%). About 5 min on a CPU; downloads ETTh1 (2.5 MB). | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/02_autoencoders_for_time_series_forecasting.ipynb) |
+
+Requirements: `torch`, `numpy`, `pandas`, `matplotlib`, `scikit-learn` (all preinstalled on Colab).
+
+
 ## Hugging Face's notebooks 🤗
 
 ### Documentation notebooks

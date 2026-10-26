@@ -6,6 +6,9 @@ It zooms into the part of [Transformer Explainer](https://poloclub.github.io/tra
 
 **Live:** https://d2718281828nis.github.io/ML-Transformers/ · in Russian: https://d2718281828nis.github.io/ML-Transformers/ru/
 
+The same site also hosts a second, independent page in [`autoencoders/`](autoencoders/): the **Autoencoder Explainer**
+(https://d2718281828nis.github.io/ML-Transformers/autoencoders/). It covers autoencoders, VAEs and their use in time-series forecasting. See its own README.
+
 ## How it works
 
 - **Real tokenizer.** `js/tokenizer.js` is a port of `src/transformers/models/gpt2/tokenization_gpt2.py` that also records every BPE merge step. `assets/gpt2/vocab.json` and `merges.txt` come from [`openai-community/gpt2`](https://huggingface.co/openai-community/gpt2) (MIT).
