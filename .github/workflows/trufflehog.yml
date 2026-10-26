@@ -16,3 +16,8 @@ jobs:
           fetch-depth: 0
       - name: Secret Scanning
         uses: trufflesecurity/trufflehog@main
+        with:
+          # Fail only on secrets that are live (verified) or could not be checked (unknown).
+          # The first push of a new branch rescans the whole upstream history, which holds
+          # test strings TruffleHog flags but confirms are not valid credentials (unverified).
+          extra_args: --results=verified,unknown
