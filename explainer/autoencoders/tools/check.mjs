@@ -4,7 +4,7 @@
 //     node explainer/autoencoders/tools/check.mjs
 
 import { readFileSync } from "node:fs";
-import { prepareDigits, encode, decode } from "../js/digits.js";
+import { prepareDigits, encode, decode, img } from "../js/digits.js";
 import { prepareForecast, nlinear, aeForecast, cvaeMean } from "../js/forecast.js";
 import { Dense, Net, mseGrad } from "../js/nn.js";
 
@@ -24,18 +24,14 @@ function compare(label, got, want, tol = 1e-4) {
   console.log(`${ok ? "ok  " : "FAIL"} ${label.padEnd(34)} max |Δ| = ${diff.toExponential(2)}`);
 }
 
-// digits
+// digits: the page resizes the shipped 28 × 28 images itself, then runs the conv encoders and decoders
 const D = prepareDigits(asset("digits.json"), asset("digit-models.json"));
-const img = (i) => D.X.subarray(i * 64, i * 64 + 64);
-const ae = D.models.ae;
-compare("digits AE encoder (5 images)", [0, 1, 2, 3, 4].map((i) => Array.from(encode(ae, img(i)).mu)), checks.digits.ae.z);
-compare("digits AE decoder (2 codes)", [[1.5, -2], [8, 3]].map((z) => Array.from(decode(ae, Float32Array.from(z)))), checks.digits.ae.decode);
-for (const key of ["vae-0.1", "vae-1", "vae-2", "vae-4"]) {
+for (const key of Object.keys(D.models)) {
   const m = D.models[key];
-  const enc = [0, 1, 2, 3, 4].map((i) => encode(m, img(i)));
-  compare(`digits ${key} encoder μ`, enc.map((e) => Array.from(e.mu)), checks.digits[key].mu);
-  compare(`digits ${key} encoder log σ²`, enc.map((e) => Array.from(e.logvar)), checks.digits[key].logvar);
-  compare(`digits ${key} decoder`, [[0.5, -1], [-1.5, 1.2]].map((z) => Array.from(decode(m, Float32Array.from(z)))), checks.digits[key].decode);
+  const enc = [0, 1, 2, 3, 4].map((i) => encode(m, img(D, i)));
+  compare(`digits ${key} encoder μ (5 images)`, enc.map((e) => Array.from(e.mu)), checks.digits[key].mu);
+  if (m.logvar) compare(`digits ${key} encoder log σ²`, enc.map((e) => Array.from(e.logvar)), checks.digits[key].logvar);
+  compare(`digits ${key} decoder (2 codes)`, [[0.5, -1], [-1.5, 1.2]].map((z) => Array.from(decode(m, z))), checks.digits[key].decode);
 }
 
 // ETTh1 forecasting

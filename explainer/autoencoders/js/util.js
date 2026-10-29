@@ -133,7 +133,7 @@ export function widthOf(el, fallback = 600) {
 }
 
 // Draw an 8×8 image (values 0..1) as ink on paper.
-export function drawDigit(canvas, img, offset = 0, size = 8) {
+export function drawDigit(canvas, img, offset = 0, size = 64) {
   const c = colors();
   if (canvas.width !== size) {
     canvas.width = size;
@@ -153,7 +153,7 @@ export function drawDigit(canvas, img, offset = 0, size = 8) {
   return canvas;
 }
 export function digitCanvas(img, offset = 0, cls = "digit") {
-  return drawDigit(h("canvas", { class: cls, width: 8, height: 8 }), img, offset);
+  return drawDigit(h("canvas", { class: cls, width: 64, height: 64 }), img, offset);
 }
 
 // ───────────── assets ─────────────

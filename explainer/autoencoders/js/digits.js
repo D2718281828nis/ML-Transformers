@@ -4,50 +4,80 @@
 import {
   h, fmt, pct, clamp, colors, rgbCss, fitCanvas, widthOf, rng, segToggle, ctl, showTip, hideTip, drawDigit, digitCanvas, f32,
 } from "./util.js";
-import { mlp, sigmoid } from "./nn.js";
+import { sequential, sigmoid } from "./nn.js";
 import { lineChart, legendRow } from "./charts.js";
 import { T } from "./i18n.js";
 
 const ALPHABET = "0123456789abcdefg";
 const MONO = (typeof document !== "undefined" && getComputedStyle(document.documentElement).getPropertyValue("--mono").trim()) || "monospace";
+export const SIDE = 64; // the models see 64 × 64 images
+const NPX = SIDE * SIDE;
 
 // ───────────── data & models ─────────────
+// The images ship at MNIST's 28 × 28 and are resized like the training data (tools/build_assets.py).
+// Each model ships the codes of every image, so the page never has to run 2000 images through five encoders.
 export function prepareDigits(dj, mj) {
   const n = dj.n;
-  const X = new Float32Array(n * 64);
-  for (let i = 0; i < n * 64; i++) X[i] = ALPHABET.indexOf(dj.images[i]) / 16;
+  const side = dj.side;
+  const small = new Float32Array(n * side * side);
+  for (let i = 0; i < small.length; i++) small[i] = ALPHABET.indexOf(dj.images[i]) / 16;
   const labels = Uint8Array.from(dj.labels, Number);
-  const isTest = Uint8Array.from(dj.test, Number);
-  const layers = (ls) => ls.map((l) => ({ W: f32(l.w), b: f32(l.b), nOut: l.w.shape[0], nIn: l.w.shape[1] }));
+  const layers = (ls) => ls.map((l) => ({ type: l.type, W: l.w && f32(l.w), b: l.b && f32(l.b), stride: l.stride, pad: l.pad, shape: l.shape }));
   const models = {};
   for (const [key, m] of Object.entries(mj.models)) {
-    models[key] = { key, kind: m.kind, beta: m.beta, metrics: m.metrics, enc: layers(m.encoder), dec: layers(m.decoder) };
+    models[key] = {
+      key, kind: m.kind, beta: m.beta, metrics: m.metrics, enc: layers(m.encoder), dec: layers(m.decoder),
+      codes: f32(m.codes), logvar: m.logvar ? f32(m.logvar) : null,
+    };
   }
-  return { n, X, labels, isTest, models, cache: {} };
+  return { n, side, small, labels, models, cache: {}, images: new Map() };
+}
+
+// F.interpolate(mode="bilinear", align_corners=False) from a square sIn image to sOut, then clamped to [0, 1]
+export function resize(src, sIn, sOut, out = new Float32Array(sOut * sOut)) {
+  const scale = sIn / sOut;
+  const axis = Array.from({ length: sOut }, (_, o) => {
+    const x = Math.max(0, (o + 0.5) * scale - 0.5);
+    const x0 = Math.min(Math.floor(x), sIn - 1);
+    return [x0, Math.min(x0 + 1, sIn - 1), x - x0];
+  });
+  for (let oy = 0; oy < sOut; oy++) {
+    const [y0, y1, ty] = axis[oy];
+    for (let ox = 0; ox < sOut; ox++) {
+      const [x0, x1, tx] = axis[ox];
+      const top = (1 - tx) * src[y0 * sIn + x0] + tx * src[y0 * sIn + x1];
+      const bot = (1 - tx) * src[y1 * sIn + x0] + tx * src[y1 * sIn + x1];
+      out[oy * sOut + ox] = clamp((1 - ty) * top + ty * bot, 0, 1);
+    }
+  }
+  return out;
+}
+
+// image i at 64 × 64 (a few hundred are kept around)
+export function img(D, i) {
+  let im = D.images.get(i);
+  if (!im) {
+    if (D.images.size > 400) D.images.clear();
+    im = resize(D.small.subarray(i * D.side * D.side, (i + 1) * D.side * D.side), D.side, SIDE);
+    D.images.set(i, im);
+  }
+  return im;
 }
 
 export function encode(model, x) {
-  const out = mlp(model.enc, x, "relu");
+  const out = sequential(model.enc, x, [1, SIDE, SIDE]);
   return model.kind === "vae" ? { mu: out.subarray(0, 2), logvar: out.subarray(2, 4) } : { mu: out, logvar: null };
 }
 export function decode(model, z) {
-  const out = mlp(model.dec, z, "relu");
+  const out = sequential(model.dec, z);
   for (let i = 0; i < out.length; i++) out[i] = sigmoid(out[i]);
   return out;
 }
 
-// codes (μ for a VAE) and log-variances of every image, cached per model
+// codes (μ for a VAE) and log-variances of every image, with their bounding box
 function codes(D, key) {
   if (D.cache[key]) return D.cache[key];
-  const m = D.models[key];
-  const mu = new Float32Array(D.n * 2);
-  const logvar = m.kind === "vae" ? new Float32Array(D.n * 2) : null;
-  for (let i = 0; i < D.n; i++) {
-    const e = encode(m, D.X.subarray(i * 64, i * 64 + 64));
-    mu[2 * i] = e.mu[0];
-    mu[2 * i + 1] = e.mu[1];
-    if (logvar) (logvar[2 * i] = e.logvar[0]), (logvar[2 * i + 1] = e.logvar[1]);
-  }
+  const { codes: mu, logvar } = D.models[key];
   let x0 = Infinity;
   let x1 = -Infinity;
   let y0 = Infinity;
@@ -117,25 +147,17 @@ function latentMap(D, opts) {
     const g = st.geo;
     const key = `${model.key}:${g.W}:${g.H}:${g.x0}:${g.y0}`;
     if (st.mapCache?.key === key) return st.mapCache.canvas;
-    const cell = 30;
+    const cell = 34;
     const cols = Math.max(4, Math.floor(g.W / cell));
     const rows = Math.max(4, Math.floor(g.H / cell));
-    const off = h("canvas", { width: cols * 8, height: rows * 8 });
+    const off = h("canvas", { width: cols * SIDE, height: rows * SIDE });
     const octx = off.getContext("2d");
-    const img = octx.createImageData(cols * 8, rows * 8);
+    const img = octx.createImageData(cols * SIDE, rows * SIDE);
     const c = colors();
     for (let r = 0; r < rows; r++) {
       for (let q = 0; q < cols; q++) {
         const z = toZ(((q + 0.5) / cols) * g.W, ((r + 0.5) / rows) * g.H);
-        const px = decode(model, Float32Array.from(z));
-        for (let p = 0; p < 64; p++) {
-          const col = [c.paper[0] + (c.ink[0] - c.paper[0]) * px[p], c.paper[1] + (c.ink[1] - c.paper[1]) * px[p], c.paper[2] + (c.ink[2] - c.paper[2]) * px[p]];
-          const o = ((r * 8 + (p >> 3)) * cols * 8 + q * 8 + (p & 7)) * 4;
-          img.data[o] = col[0];
-          img.data[o + 1] = col[1];
-          img.data[o + 2] = col[2];
-          img.data[o + 3] = 255;
-        }
+        paintCell(img, decode(model, z), q * SIDE, r * SIDE, c);
       }
     }
     octx.putImageData(img, 0, 0);
@@ -153,7 +175,7 @@ function latentMap(D, opts) {
     ctx.clearRect(0, 0, g.W, g.H);
     if (opts.showMap?.()) {
       ctx.save();
-      ctx.imageSmoothingEnabled = false;
+      ctx.imageSmoothingQuality = "high";
       ctx.globalAlpha = 0.55;
       ctx.drawImage(decoderMap(D.models[key]), 0, 0, g.W, g.H);
       ctx.restore();
@@ -252,21 +274,32 @@ function latentMap(D, opts) {
   };
 }
 
+// write a 64 × 64 image into an ImageData at (x, y)
+function paintCell(im, px, x, y, c) {
+  for (let p = 0; p < NPX; p++) {
+    const v = px[p];
+    const o = ((y + Math.floor(p / SIDE)) * im.width + x + (p % SIDE)) * 4;
+    im.data[o] = c.paper[0] + (c.ink[0] - c.paper[0]) * v;
+    im.data[o + 1] = c.paper[1] + (c.ink[1] - c.paper[1]) * v;
+    im.data[o + 2] = c.paper[2] + (c.ink[2] - c.paper[2]) * v;
+    im.data[o + 3] = 255;
+  }
+}
+
 function niceStep(span) {
   const raw = span / 6;
   const mag = 10 ** Math.floor(Math.log10(raw));
   return [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) || raw;
 }
 
-const img = (D, i) => D.X.subarray(i * 64, i * 64 + 64);
 const firstOf = (D, digit, k = 0) => {
   let seen = 0;
-  for (let i = 0; i < D.n; i++) if (D.isTest[i] && D.labels[i] === digit && seen++ === k) return i;
+  for (let i = 0; i < D.n; i++) if (D.labels[i] === digit && seen++ === k) return i;
   return 0;
 };
 
 function bigDigit(caption) {
-  const c = h("canvas", { class: "digit digit-big", width: 8, height: 8 });
+  const c = h("canvas", { class: "digit digit-big", width: SIDE, height: SIDE });
   return { canvas: c, fig: h("figure", null, c, h("figcaption", null, caption)) };
 }
 
@@ -358,7 +391,7 @@ function mapSection(D, root) {
         showTip(`${T.image} #${i} · ${T.digit} ${D.labels[i]}`, ev);
       } else {
         hideTip();
-        drawDigit(big.canvas, decode(ae, Float32Array.from(z)));
+        drawDigit(big.canvas, decode(ae, z));
         zLine.textContent = `${T.decodedAt} z = (${fmt(z[0], 2)}, ${fmt(z[1], 2)})`;
       }
     },
@@ -392,51 +425,50 @@ function mapSection(D, root) {
   return { redraw: () => (map.relayout(), showPoint(st.shown)) };
 }
 
-// 2.2 — the pad is 64 × 64; the encoder sees its 8 × 8 block means, the way scikit-learn's digits
-// were made from 32 × 32 scans (counts of ink per 4 × 4 block).
-const PAD = 64;
-const BLOCK = PAD / 8;
+// 2.2
+// MNIST's digits were scaled to fit a 20 × 20 box and centered by their center of mass in 28 × 28;
+// at 64 × 64 that box is 46 pixels wide. Drawings get the same treatment before the encoder sees them.
+const BOX = Math.round((20 / 28) * SIDE);
 
-function downsample(pad, out) {
+function mnistNormalize(src, out = new Float32Array(NPX)) {
+  let [x0, x1, y0, y1, m, mx, my] = [SIDE, -1, SIDE, -1, 0, 0, 0];
+  for (let y = 0; y < SIDE; y++) {
+    for (let x = 0; x < SIDE; x++) {
+      const v = src[y * SIDE + x];
+      if (v > 0.05) (x0 = Math.min(x0, x)), (x1 = Math.max(x1, x)), (y0 = Math.min(y0, y)), (y1 = Math.max(y1, y));
+      (m += v), (mx += v * (x + 0.5)), (my += v * (y + 0.5));
+    }
+  }
   out.fill(0);
-  for (let y = 0; y < PAD; y++) for (let x = 0; x < PAD; x++) out[((y / BLOCK) | 0) * 8 + ((x / BLOCK) | 0)] += pad[y * PAD + x];
-  for (let k = 0; k < 64; k++) out[k] /= BLOCK * BLOCK;
+  if (x1 < 0 || m < 1e-6) return out;
+  const s = BOX / Math.max(x1 - x0 + 1, y1 - y0 + 1);
+  const [cx, cy] = [mx / m, my / m];
+  const at = (x, y) => (x < 0 || y < 0 || x >= SIDE || y >= SIDE ? 0 : src[y * SIDE + x]);
+  const bilinear = (x, y) => {
+    const [fx, fy] = [Math.floor(x), Math.floor(y)];
+    const [tx, ty] = [x - fx, y - fy];
+    return (1 - ty) * ((1 - tx) * at(fx, fy) + tx * at(fx + 1, fy)) + ty * ((1 - tx) * at(fx, fy + 1) + tx * at(fx + 1, fy + 1));
+  };
+  // 2 × 2 samples per output pixel, so shrinking a big drawing doesn't alias
+  for (let v = 0; v < SIDE; v++) {
+    for (let u = 0; u < SIDE; u++) {
+      let acc = 0;
+      for (const [du, dv] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) {
+        acc += bilinear(cx + (u + du - SIDE / 2) / s - 0.5, cy + (v + dv - SIDE / 2) / s - 0.5);
+      }
+      out[v * SIDE + u] = clamp(acc / 4, 0, 1);
+    }
+  }
   return out;
 }
 
-// a smooth 64 × 64 image whose block means reproduce the 8 × 8 one: bilinear upsampling,
-// then a few rounds of shifting each block toward its target mean within [0, 1]
-function upsample(small, pad) {
-  for (let y = 0; y < PAD; y++) {
-    const fy = clamp((y + 0.5) / BLOCK - 0.5, 0, 7);
-    const y0 = Math.min(fy | 0, 6);
-    const ty = fy - y0;
-    for (let x = 0; x < PAD; x++) {
-      const fx = clamp((x + 0.5) / BLOCK - 0.5, 0, 7);
-      const x0 = Math.min(fx | 0, 6);
-      const tx = fx - x0;
-      const s = (r, c) => small[r * 8 + c];
-      pad[y * PAD + x] = (1 - ty) * ((1 - tx) * s(y0, x0) + tx * s(y0, x0 + 1)) + ty * ((1 - tx) * s(y0 + 1, x0) + tx * s(y0 + 1, x0 + 1));
-    }
-  }
-  const mean = new Float32Array(64);
-  for (let it = 0; it < 12; it++) {
-    downsample(pad, mean);
-    for (let p = 0; p < PAD * PAD; p++) {
-      const k = (((p / PAD) | 0) / BLOCK | 0) * 8 + (((p % PAD) / BLOCK) | 0);
-      pad[p] = clamp(pad[p] + small[k] - mean[k], 0, 1);
-    }
-  }
-  return pad;
-}
-
 function drawSection(D, root) {
-  const pad = new Float32Array(PAD * PAD);
-  const grid = new Float32Array(64);
-  const st = { erase: false, painting: false, last: null };
+  const pad = new Float32Array(NPX);
+  const input = new Float32Array(NPX);
+  const st = { erase: false, painting: false, last: null, normalize: true };
   const ae = D.models.ae;
   const vae = D.models["vae-1"];
-  const paint = h("canvas", { class: "digit paint", width: PAD, height: PAD, "aria-label": T.paintLabel });
+  const paint = h("canvas", { class: "digit paint", width: SIDE, height: SIDE, "aria-label": T.paintLabel });
   const seen = bigDigit(T.encoderSees);
   const recAE = bigDigit(T.aeRebuilds);
   const recVAE = bigDigit(T.vaeRebuilds);
@@ -458,13 +490,14 @@ function drawSection(D, root) {
     },
   });
   function update() {
-    drawDigit(paint, pad, 0, PAD);
-    downsample(pad, grid);
-    drawDigit(seen.canvas, grid);
-    const z = encode(ae, grid).mu;
+    drawDigit(paint, pad);
+    if (st.normalize) mnistNormalize(pad, input);
+    else input.set(pad);
+    drawDigit(seen.canvas, input);
+    const z = encode(ae, input).mu;
     mine = [z[0], z[1]];
     drawDigit(recAE.canvas, decode(ae, z));
-    drawDigit(recVAE.canvas, decode(vae, encode(vae, grid).mu));
+    drawDigit(recVAE.canvas, decode(vae, encode(vae, input).mu));
     // vote of the 10 nearest training codes
     const { mu } = codes(D, "ae");
     const near = [];
@@ -473,21 +506,21 @@ function drawSection(D, root) {
     const votes = new Array(10).fill(0);
     for (const [, l] of near.slice(0, 10)) votes[l]++;
     const top = votes.indexOf(Math.max(...votes));
-    const empty = grid.every((v) => v < 1e-3);
+    const empty = pad.every((v) => v < 1e-3);
     verdict.textContent = empty ? T.drawEmpty : T.drawVerdict(top, votes[top]);
     map.draw();
   }
   // a round, anti-aliased brush stamped along the segment since the last pointer event
   const at = (ev) => {
     const r = paint.getBoundingClientRect();
-    return [((ev.clientX - r.left) / r.width) * PAD, ((ev.clientY - r.top) / r.height) * PAD];
+    return [((ev.clientX - r.left) / r.width) * SIDE, ((ev.clientY - r.top) / r.height) * SIDE];
   };
   function stamp(cx, cy) {
     const rad = st.erase ? 6 : 3.2;
-    for (let y = Math.max(0, Math.floor(cy - rad - 1)); y <= Math.min(PAD - 1, Math.ceil(cy + rad + 1)); y++) {
-      for (let x = Math.max(0, Math.floor(cx - rad - 1)); x <= Math.min(PAD - 1, Math.ceil(cx + rad + 1)); x++) {
+    for (let y = Math.max(0, Math.floor(cy - rad - 1)); y <= Math.min(SIDE - 1, Math.ceil(cy + rad + 1)); y++) {
+      for (let x = Math.max(0, Math.floor(cx - rad - 1)); x <= Math.min(SIDE - 1, Math.ceil(cx + rad + 1)); x++) {
         const v = clamp(rad + 0.5 - Math.hypot(x + 0.5 - cx, y + 0.5 - cy), 0, 1);
-        const k = y * PAD + x;
+        const k = y * SIDE + x;
         pad[k] = st.erase ? Math.min(pad[k], 1 - v) : Math.max(pad[k], v);
       }
     }
@@ -512,20 +545,20 @@ function drawSection(D, root) {
   paint.addEventListener("pointercancel", stop);
   let sample = 0;
   const load = () => {
-    const tests = [];
-    for (let i = 0; i < D.n; i++) if (D.isTest[i]) tests.push(i);
-    const i = tests[(sample++ * 37) % tests.length];
-    upsample(img(D, i), pad);
+    pad.set(img(D, (sample++ * 37) % D.n));
     update();
   };
+  const normToggle = h("input", { type: "checkbox", checked: true });
+  normToggle.addEventListener("change", () => ((st.normalize = normToggle.checked), update()));
   root.replaceChildren(
     h("div", { class: "controls" },
       segToggle([{ value: false, label: T.brush }, { value: true, label: T.eraser }], false, (v) => (st.erase = v), T.tool),
       h("button", { class: "btn", type: "button", onclick: () => (pad.fill(0), update()) }, T.clear),
-      h("button", { class: "btn", type: "button", onclick: load }, T.loadTestDigit)),
+      h("button", { class: "btn", type: "button", onclick: load }, T.loadTestDigit),
+      h("label", { class: "toggle" }, normToggle, T.normalizeLikeMnist)),
     h("div", { class: "viz-row" },
       h("div", { class: "paint-wrap" },
-        h("div", { class: "digit-pair" }, h("figure", null, h("div", { class: "paint-box" }, paint), h("figcaption", null, T.paintCaption))),
+        h("div", { class: "digit-pair" }, h("figure", null, paint, h("figcaption", null, T.paintCaption))),
         h("div", { class: "digit-pair" }, seen.fig, recAE.fig, recVAE.fig)),
       h("div", { class: "grow" }, h("div", { class: "panel-title" }, T.whereItLands), map.el, verdict)),
   );
@@ -538,23 +571,18 @@ function drawSection(D, root) {
 function gridSection(D, root) {
   const ae = D.models.ae;
   const n = 15;
-  const mosaic = h("canvas", { class: "digit", width: n * 9 + 1, height: n * 9 + 1, style: { width: "100%", maxWidth: "420px", height: "auto", aspectRatio: "1", borderRadius: "8px" } });
+  const cell = SIDE + 2;
+  const mosaic = h("canvas", { class: "digit", width: n * cell + 2, height: n * cell + 2, style: { width: "100%", maxWidth: "440px", height: "auto", aspectRatio: "1", borderRadius: "8px" } });
   const [x0, x1, y0, y1] = codes(D, "ae").box;
   function drawMosaic() {
     const c = colors();
     const ctx = mosaic.getContext("2d");
-    const im = ctx.createImageData(n * 9 + 1, n * 9 + 1);
+    const im = ctx.createImageData(mosaic.width, mosaic.height);
     for (let k = 0; k < im.data.length; k += 4) (im.data[k] = c.paper[0] * 0.92 + c.ink[0] * 0.08), (im.data[k + 1] = c.paper[1] * 0.92 + c.ink[1] * 0.08), (im.data[k + 2] = c.paper[2] * 0.92 + c.ink[2] * 0.08), (im.data[k + 3] = 255);
     for (let r = 0; r < n; r++) {
       for (let q = 0; q < n; q++) {
-        const z = Float32Array.of(x0 + ((x1 - x0) * q) / (n - 1), y1 - ((y1 - y0) * r) / (n - 1));
-        const px = decode(ae, z);
-        for (let p = 0; p < 64; p++) {
-          const o = ((1 + r * 9 + (p >> 3)) * (n * 9 + 1) + 1 + q * 9 + (p & 7)) * 4;
-          im.data[o] = c.paper[0] + (c.ink[0] - c.paper[0]) * px[p];
-          im.data[o + 1] = c.paper[1] + (c.ink[1] - c.paper[1]) * px[p];
-          im.data[o + 2] = c.paper[2] + (c.ink[2] - c.paper[2]) * px[p];
-        }
+        const z = [x0 + ((x1 - x0) * q) / (n - 1), y1 - ((y1 - y0) * r) / (n - 1)];
+        paintCell(im, decode(ae, z), 2 + q * cell, 2 + r * cell, c);
       }
     }
     ctx.putImageData(im, 0, 0);
@@ -703,8 +731,8 @@ function cloudSection(D, root) {
       h("dt", null, T.lastEps), h("dd", null, `(${fmt(st.eps[0], 2)}, ${fmt(st.eps[1], 2)})`),
       h("dt", null, "z = μ + σ·ε"), h("dd", null, `(${fmt(last[0], 2)}, ${fmt(last[1], 2)})`));
     drawDigit(orig.canvas, img(D, st.i));
-    drawDigit(mean.canvas, decode(vae, Float32Array.from(m)));
-    samplesBox.replaceChildren(h("div", { class: "panel-title" }, T.decodedSamples(k)), strip(st.samples.map((z) => decode(vae, Float32Array.from(z))), "small"));
+    drawDigit(mean.canvas, decode(vae, m));
+    samplesBox.replaceChildren(h("div", { class: "panel-title" }, T.decodedSamples(k)), strip(st.samples.map((z) => decode(vae, z)), "small"));
     map.draw();
   }
   root.replaceChildren(
@@ -732,7 +760,7 @@ function vaeMapSection(D, root) {
   const map = latentMap(D, {
     modelKey: () => st.key, bounds: box, showMap: () => st.showMap, alpha: 0.4,
     onMove(i, z, ev) {
-      const im = decode(D.models[st.key], Float32Array.from(z));
+      const im = decode(D.models[st.key], z);
       const tip = h("div", null, i >= 0 ? `${T.digit} ${D.labels[i]} · ` : "", `z = (${fmt(z[0], 2)}, ${fmt(z[1], 2)})`, h("br"), digitCanvas(im));
       showTip(tip, ev);
     },
@@ -768,7 +796,7 @@ function vaeMapSection(D, root) {
     const [x0, x1, y0, y1] = codes(D, "ae").box;
     st.samples = Array.from({ length: 12 }, () => (st.key === "ae" ? [x0 + (x1 - x0) * r.uniform(), y0 + (y1 - y0) * r.uniform()] : [r.normal(), r.normal()]));
     samplesBox.replaceChildren(h("div", { class: "panel-title", html: st.key === "ae" ? T.samplesAE : T.samplesVAE }),
-      strip(st.samples.map((z) => decode(D.models[st.key], Float32Array.from(z)))));
+      strip(st.samples.map((z) => decode(D.models[st.key], z))));
     map.draw();
   }
   const terrAE = territory(D, "ae", (r) => {
@@ -828,8 +856,8 @@ function betaSection(D, root) {
       h("span", null, h("b", null, fmt(m.metrics.rec, 1)), T.recNats),
       h("span", null, h("b", null, fmt(m.metrics.kl, 2)), T.klNats),
       h("span", null, h("b", null, fmt(m.metrics.mse, 4)), T.pixelMse)),
-    m.beta >= 4 ? h("div", { class: "callout warn" }, T.collapse) : h("p", { class: "sub" }, T.betaNote(m.beta)));
-    samplesBox.replaceChildren(h("div", { class: "panel-title", html: T.priorSamples }), strip(fixedZ.map((z) => decode(m, Float32Array.from(z))), "small"));
+    m.metrics.kl < 0.3 ? h("div", { class: "callout warn" }, T.collapse) : h("p", { class: "sub" }, T.betaNote(m.beta)));
+    samplesBox.replaceChildren(h("div", { class: "panel-title", html: T.priorSamples }), strip(fixedZ.map((z) => decode(m, z)), "small"));
     map.draw();
   }
   root.replaceChildren(
@@ -849,9 +877,10 @@ function interpSection(D, root) {
   const rows = h("div");
   const maps = {};
   const pathOf = (key) => {
-    const m = D.models[key];
-    const za = encode(m, img(D, firstOf(D, st.a, st.ka))).mu;
-    const zb = encode(m, img(D, firstOf(D, st.b, st.kb))).mu;
+    const { mu } = codes(D, key);
+    const [ia, ib] = [firstOf(D, st.a, st.ka), firstOf(D, st.b, st.kb)];
+    const za = [mu[2 * ia], mu[2 * ia + 1]];
+    const zb = [mu[2 * ib], mu[2 * ib + 1]];
     return Array.from({ length: steps }, (_, i) => {
       const t = i / (steps - 1);
       return [za[0] * (1 - t) + zb[0] * t, za[1] * (1 - t) + zb[1] * t];
@@ -880,7 +909,7 @@ function interpSection(D, root) {
   }
   function render() {
     const row = (key, label) => h("div", { class: "strip-row" }, h("span", null, label),
-      strip([img(D, firstOf(D, st.a, st.ka)), ...pathOf(key).map((z) => decode(D.models[key], Float32Array.from(z))), img(D, firstOf(D, st.b, st.kb))], "small"));
+      strip([img(D, firstOf(D, st.a, st.ka)), ...pathOf(key).map((z) => decode(D.models[key], z)), img(D, firstOf(D, st.b, st.kb))], "small"));
     rows.replaceChildren(row("ae", "AE"), row("vae-1", "VAE (β = 1)"), h("p", { class: "sub" }, T.interpNote));
     maps.ae.draw();
     maps["vae-1"].draw();

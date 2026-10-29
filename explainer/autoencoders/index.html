@@ -118,10 +118,12 @@
     <span class="stage-num">2</span>
     <div>
       <h2>An autoencoder for handwritten digits</h2>
-      <p>Now real data: 1,797 handwritten digits of 8 × 8 pixels (scikit-learn's <code>digits</code>). The encoder (64 → 128 → 2) squeezes each image
-        into <b>two</b> numbers, so every image becomes a point in a plane we can look at. The decoder (2 → 128 → 64) turns any point of that plane
-        back into an image. The networks were trained in <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/01_autoencoders_and_vae.ipynb" target="_blank" rel="noopener">notebook 01</a>
-        and run here.</p>
+      <p>Now real data: handwritten digits from MNIST, resized from 28 × 28 to 64 × 64 pixels. The encoder squeezes each image into <b>two</b> numbers,
+        so every image becomes a point in a plane we can look at. Four convolutions halve the image four times (64 → 32 → 16 → 8 → 4 pixels),
+        then two dense layers reduce the 4 × 4 feature map to the code. The decoder mirrors it and turns any point of that plane back into an image.
+        The networks were trained on MNIST's 60,000 training images by <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/explainer/autoencoders/tools/build_assets.py" target="_blank" rel="noopener"><code>build_assets.py</code></a>
+        and run here; the maps show 2,000 test images. <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/01_autoencoders_and_vae.ipynb" target="_blank" rel="noopener">Notebook 01</a> builds the same models
+        step by step on scikit-learn's smaller 8 × 8 digits.</p>
     </div>
   </header>
 
@@ -135,10 +137,10 @@
 
   <article class="step" id="dg-draw">
     <h3><span class="step-num">2.2</span> Draw a digit</h3>
-    <p>Draw on the 64 × 64 pad, or start from a real test image and change it. The models were trained on 8 × 8 images, so each faint square of
-      the pad is averaged into one input pixel. That is how scikit-learn made the dataset: it counted the ink in 4 × 4 blocks of 32 × 32 scans.
-      Watch the <b>8 × 8 image the encoder sees</b> next to your drawing. Thin strokes come out faint and a line shifted by a few pixels can
-      move to the next block. Your drawing is encoded on every stroke. See where it lands and how much of it survives the two-number bottleneck.</p>
+    <p>Draw on the 64 × 64 pad, or start from a real test image and change it. Your drawing is encoded on every stroke. See where it lands and how
+      much of it survives the two-number bottleneck. MNIST's digits were scaled to fit a 20 × 20 box and centered by their center of mass, so the
+      encoder has only seen digits of one size in one place. The page treats your drawing the same way first. Turn that off and draw a small digit
+      in a corner: the encoder no longer recognises it.</p>
     <div class="viz" id="viz-dg-draw"></div>
   </article>
 
@@ -167,7 +169,7 @@
   <article class="step" id="vae-elbo">
     <h3><span class="step-num">3.1</span> The objective: rebuild well, stay close to the prior</h3>
     <p><b>The generative story.</b> First a code, then an image:</p>
-    <div class="formula"><span class="tex" data-tex="z \sim p(z) = \mathcal N(0, I), \qquad x \sim p_\theta(x \mid z) = \textstyle\prod_{j=1}^{64} \mathrm{Bernoulli}\big(x_j;\ \sigma(g_\theta(z))_j\big)">z ~ N(0, I), x ~ p(x | z)</span></div>
+    <div class="formula"><span class="tex" data-tex="z \sim p(z) = \mathcal N(0, I), \qquad x \sim p_\theta(x \mid z) = \textstyle\prod_{j=1}^{4096} \mathrm{Bernoulli}\big(x_j;\ \sigma(g_\theta(z))_j\big)">z ~ N(0, I), x ~ p(x | z)</span></div>
     <p>Fitting it means maximizing <span class="tex" data-tex="\log p_\theta(x) = \log\int p_\theta(x\mid z)\,p(z)\,dz">log p(x)</span>, an integral over every possible code.
       The encoder proposes where to look: <span class="tex" data-tex="q_\phi(z\mid x) = \mathcal N\big(\mu_\phi(x), \operatorname{diag}\sigma^2_\phi(x)\big)">q(z | x) = N(μ, σ²)</span>.
       For any such <span class="tex" data-tex="q">q</span>, the log-likelihood is bounded below by the <b>ELBO</b> (evidence lower bound), and its negative is the loss:</p>
