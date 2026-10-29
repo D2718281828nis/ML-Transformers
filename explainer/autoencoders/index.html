@@ -135,8 +135,10 @@
 
   <article class="step" id="dg-draw">
     <h3><span class="step-num">2.2</span> Draw a digit</h3>
-    <p>Paint on the 8 × 8 grid, or start from a real test image and change it. Your drawing is encoded on every stroke. See where it lands and how
-      much of it survives the two-number bottleneck.</p>
+    <p>Draw on the 64 × 64 pad, or start from a real test image and change it. The models were trained on 8 × 8 images, so each faint square of
+      the pad is averaged into one input pixel. That is how scikit-learn made the dataset: it counted the ink in 4 × 4 blocks of 32 × 32 scans.
+      Watch the <b>8 × 8 image the encoder sees</b> next to your drawing. Thin strokes come out faint and a line shifted by a few pixels can
+      move to the next block. Your drawing is encoded on every stroke. See where it lands and how much of it survives the two-number bottleneck.</p>
     <div class="viz" id="viz-dg-draw"></div>
   </article>
 

@@ -392,13 +392,52 @@ function mapSection(D, root) {
   return { redraw: () => (map.relayout(), showPoint(st.shown)) };
 }
 
-// 2.2
+// 2.2 — the pad is 64 × 64; the encoder sees its 8 × 8 block means, the way scikit-learn's digits
+// were made from 32 × 32 scans (counts of ink per 4 × 4 block).
+const PAD = 64;
+const BLOCK = PAD / 8;
+
+function downsample(pad, out) {
+  out.fill(0);
+  for (let y = 0; y < PAD; y++) for (let x = 0; x < PAD; x++) out[((y / BLOCK) | 0) * 8 + ((x / BLOCK) | 0)] += pad[y * PAD + x];
+  for (let k = 0; k < 64; k++) out[k] /= BLOCK * BLOCK;
+  return out;
+}
+
+// a smooth 64 × 64 image whose block means reproduce the 8 × 8 one: bilinear upsampling,
+// then a few rounds of shifting each block toward its target mean within [0, 1]
+function upsample(small, pad) {
+  for (let y = 0; y < PAD; y++) {
+    const fy = clamp((y + 0.5) / BLOCK - 0.5, 0, 7);
+    const y0 = Math.min(fy | 0, 6);
+    const ty = fy - y0;
+    for (let x = 0; x < PAD; x++) {
+      const fx = clamp((x + 0.5) / BLOCK - 0.5, 0, 7);
+      const x0 = Math.min(fx | 0, 6);
+      const tx = fx - x0;
+      const s = (r, c) => small[r * 8 + c];
+      pad[y * PAD + x] = (1 - ty) * ((1 - tx) * s(y0, x0) + tx * s(y0, x0 + 1)) + ty * ((1 - tx) * s(y0 + 1, x0) + tx * s(y0 + 1, x0 + 1));
+    }
+  }
+  const mean = new Float32Array(64);
+  for (let it = 0; it < 12; it++) {
+    downsample(pad, mean);
+    for (let p = 0; p < PAD * PAD; p++) {
+      const k = (((p / PAD) | 0) / BLOCK | 0) * 8 + (((p % PAD) / BLOCK) | 0);
+      pad[p] = clamp(pad[p] + small[k] - mean[k], 0, 1);
+    }
+  }
+  return pad;
+}
+
 function drawSection(D, root) {
+  const pad = new Float32Array(PAD * PAD);
   const grid = new Float32Array(64);
-  const st = { erase: false, painting: false };
+  const st = { erase: false, painting: false, last: null };
   const ae = D.models.ae;
   const vae = D.models["vae-1"];
-  const paint = h("canvas", { class: "digit paint", width: 8, height: 8, "aria-label": T.paintLabel });
+  const paint = h("canvas", { class: "digit paint", width: PAD, height: PAD, "aria-label": T.paintLabel });
+  const seen = bigDigit(T.encoderSees);
   const recAE = bigDigit(T.aeRebuilds);
   const recVAE = bigDigit(T.vaeRebuilds);
   const verdict = h("p", { class: "sub" });
@@ -419,7 +458,9 @@ function drawSection(D, root) {
     },
   });
   function update() {
-    drawDigit(paint, grid);
+    drawDigit(paint, pad, 0, PAD);
+    downsample(pad, grid);
+    drawDigit(seen.canvas, grid);
     const z = encode(ae, grid).mu;
     mine = [z[0], z[1]];
     drawDigit(recAE.canvas, decode(ae, z));
@@ -432,55 +473,60 @@ function drawSection(D, root) {
     const votes = new Array(10).fill(0);
     for (const [, l] of near.slice(0, 10)) votes[l]++;
     const top = votes.indexOf(Math.max(...votes));
-    const empty = grid.every((v) => v === 0);
+    const empty = grid.every((v) => v < 1e-3);
     verdict.textContent = empty ? T.drawEmpty : T.drawVerdict(top, votes[top]);
     map.draw();
   }
-  const cellAt = (ev) => {
+  // a round, anti-aliased brush stamped along the segment since the last pointer event
+  const at = (ev) => {
     const r = paint.getBoundingClientRect();
-    return [clamp(Math.floor(((ev.clientY - r.top) / r.height) * 8), 0, 7), clamp(Math.floor(((ev.clientX - r.left) / r.width) * 8), 0, 7)];
+    return [((ev.clientX - r.left) / r.width) * PAD, ((ev.clientY - r.top) / r.height) * PAD];
   };
-  function stroke(ev) {
-    const [r, c] = cellAt(ev);
-    const set = (rr, cc, v) => {
-      if (rr < 0 || rr > 7 || cc < 0 || cc > 7) return;
-      const k = rr * 8 + cc;
-      grid[k] = st.erase ? Math.min(grid[k], v) : Math.max(grid[k], v);
-    };
-    if (st.erase) {
-      set(r, c, 0);
-      for (const [dr, dc] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) set(r + dr, c + dc, grid[(r + dr) * 8 + c + dc] * 0.5);
-    } else {
-      set(r, c, 1);
-      for (const [dr, dc] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) set(r + dr, c + dc, 0.3);
+  function stamp(cx, cy) {
+    const rad = st.erase ? 6 : 3.2;
+    for (let y = Math.max(0, Math.floor(cy - rad - 1)); y <= Math.min(PAD - 1, Math.ceil(cy + rad + 1)); y++) {
+      for (let x = Math.max(0, Math.floor(cx - rad - 1)); x <= Math.min(PAD - 1, Math.ceil(cx + rad + 1)); x++) {
+        const v = clamp(rad + 0.5 - Math.hypot(x + 0.5 - cx, y + 0.5 - cy), 0, 1);
+        const k = y * PAD + x;
+        pad[k] = st.erase ? Math.min(pad[k], 1 - v) : Math.max(pad[k], v);
+      }
     }
+  }
+  function stroke(ev) {
+    const [x, y] = at(ev);
+    const [x0, y0] = st.last || [x, y];
+    const steps = Math.max(1, Math.ceil(Math.hypot(x - x0, y - y0)));
+    for (let s = 1; s <= steps; s++) stamp(x0 + ((x - x0) * s) / steps, y0 + ((y - y0) * s) / steps);
+    st.last = [x, y];
     update();
   }
+  const stop = () => ((st.painting = false), (st.last = null));
   paint.addEventListener("pointerdown", (ev) => {
     st.painting = true;
+    st.last = null;
     paint.setPointerCapture(ev.pointerId);
     stroke(ev);
   });
   paint.addEventListener("pointermove", (ev) => st.painting && stroke(ev));
-  paint.addEventListener("pointerup", () => (st.painting = false));
-  paint.addEventListener("pointercancel", () => (st.painting = false));
+  paint.addEventListener("pointerup", stop);
+  paint.addEventListener("pointercancel", stop);
   let sample = 0;
   const load = () => {
     const tests = [];
     for (let i = 0; i < D.n; i++) if (D.isTest[i]) tests.push(i);
     const i = tests[(sample++ * 37) % tests.length];
-    grid.set(img(D, i));
+    upsample(img(D, i), pad);
     update();
   };
   root.replaceChildren(
     h("div", { class: "controls" },
       segToggle([{ value: false, label: T.brush }, { value: true, label: T.eraser }], false, (v) => (st.erase = v), T.tool),
-      h("button", { class: "btn", type: "button", onclick: () => (grid.fill(0), update()) }, T.clear),
+      h("button", { class: "btn", type: "button", onclick: () => (pad.fill(0), update()) }, T.clear),
       h("button", { class: "btn", type: "button", onclick: load }, T.loadTestDigit)),
     h("div", { class: "viz-row" },
       h("div", { class: "paint-wrap" },
-        h("figure", { class: "digit-pair", style: { margin: 0 } }, paint),
-        h("div", { class: "digit-pair" }, recAE.fig, recVAE.fig)),
+        h("div", { class: "digit-pair" }, h("figure", null, h("div", { class: "paint-box" }, paint), h("figcaption", null, T.paintCaption))),
+        h("div", { class: "digit-pair" }, seen.fig, recAE.fig, recVAE.fig)),
       h("div", { class: "grow" }, h("div", { class: "panel-title" }, T.whereItLands), map.el, verdict)),
   );
   load();

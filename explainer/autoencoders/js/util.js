@@ -133,15 +133,15 @@ export function widthOf(el, fallback = 600) {
 }
 
 // Draw an 8×8 image (values 0..1) as ink on paper.
-export function drawDigit(canvas, img, offset = 0) {
+export function drawDigit(canvas, img, offset = 0, size = 8) {
   const c = colors();
-  if (canvas.width !== 8) {
-    canvas.width = 8;
-    canvas.height = 8;
+  if (canvas.width !== size) {
+    canvas.width = size;
+    canvas.height = size;
   }
   const ctx = canvas.getContext("2d");
-  const data = ctx.createImageData(8, 8);
-  for (let p = 0; p < 64; p++) {
+  const data = ctx.createImageData(size, size);
+  for (let p = 0; p < size * size; p++) {
     const v = clamp(img[offset + p], 0, 1);
     const col = mix(c.paper, c.ink, v);
     data.data[p * 4] = col[0];
