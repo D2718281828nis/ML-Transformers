@@ -1,5 +1,6 @@
-// Small dense-network math in plain Float32Arrays.
-//  * forward passes for the PyTorch weights exported by tools/build_assets.py (weights are [out, in], row-major);
+// Small network math in plain Float32Arrays.
+//  * forward passes for the PyTorch weights exported by tools/build_assets.py (dense and convolutional layers,
+//    weights in PyTorch's layout, row-major);
 //  * a trainable Dense/Net with backprop and Adam for the live demos (toy autoencoder, forecasting lab);
 //  * ridge least squares (Cholesky) for the lab's full-rank reference.
 
@@ -28,6 +29,85 @@ export function mlp(layers, x, act = "relu") {
       else if (act === "tanh") for (let j = 0; j < a.length; j++) a[j] = Math.tanh(a[j]);
     }
   });
+  return a;
+}
+
+// nn.Conv2d on one [cIn, h, w] image. W: [cOut, cIn, k, k].
+export function conv2d(x, cIn, h, w, W, b, cOut, k, stride, pad) {
+  const ho = Math.floor((h + 2 * pad - k) / stride) + 1;
+  const wo = Math.floor((w + 2 * pad - k) / stride) + 1;
+  const out = new Float32Array(cOut * ho * wo);
+  for (let o = 0; o < cOut; o++) {
+    for (let oy = 0; oy < ho; oy++) {
+      for (let ox = 0; ox < wo; ox++) {
+        let acc = b[o];
+        for (let c = 0; c < cIn; c++) {
+          const wBase = (o * cIn + c) * k * k;
+          const xBase = c * h * w;
+          for (let ky = 0; ky < k; ky++) {
+            const iy = oy * stride - pad + ky;
+            if (iy < 0 || iy >= h) continue;
+            for (let kx = 0; kx < k; kx++) {
+              const ix = ox * stride - pad + kx;
+              if (ix >= 0 && ix < w) acc += W[wBase + ky * k + kx] * x[xBase + iy * w + ix];
+            }
+          }
+        }
+        out[(o * ho + oy) * wo + ox] = acc;
+      }
+    }
+  }
+  return { out, h: ho, w: wo };
+}
+
+// nn.ConvTranspose2d on one [cIn, h, w] image. W: [cIn, cOut, k, k]. Each input pixel scatters a k × k stamp.
+export function convTranspose2d(x, cIn, h, w, W, b, cOut, k, stride, pad) {
+  const ho = (h - 1) * stride - 2 * pad + k;
+  const wo = (w - 1) * stride - 2 * pad + k;
+  const out = new Float32Array(cOut * ho * wo);
+  for (let o = 0; o < cOut; o++) out.fill(b[o], o * ho * wo, (o + 1) * ho * wo);
+  for (let c = 0; c < cIn; c++) {
+    for (let iy = 0; iy < h; iy++) {
+      for (let ix = 0; ix < w; ix++) {
+        const v = x[(c * h + iy) * w + ix];
+        if (v === 0) continue; // inputs come out of a ReLU: mostly zeros
+        for (let o = 0; o < cOut; o++) {
+          const wBase = (c * cOut + o) * k * k;
+          const oBase = o * ho * wo;
+          for (let ky = 0; ky < k; ky++) {
+            const oy = iy * stride - pad + ky;
+            if (oy < 0 || oy >= ho) continue;
+            for (let kx = 0; kx < k; kx++) {
+              const ox = ix * stride - pad + kx;
+              if (ox >= 0 && ox < wo) out[oBase + oy * wo + ox] += v * W[wBase + ky * k + kx];
+            }
+          }
+        }
+      }
+    }
+  }
+  return { out, h: ho, w: wo };
+}
+
+// Run an exported nn.Sequential of Linear / Conv2d / ConvTranspose2d / ReLU / Flatten / Unflatten on one input.
+// layers: [{type, W, b, shape, stride, pad}] as prepared from build_assets.py; shape: [c, h, w] of an image input, or null for a vector.
+export function sequential(layers, x, shape = null) {
+  let a = x;
+  let s = shape;
+  for (const L of layers) {
+    if (L.type === "linear") a = affine(L.W, L.b, a, L.W.shape[0], L.W.shape[1]);
+    else if (L.type === "relu") for (let j = 0; j < a.length; j++) a[j] = a[j] > 0 ? a[j] : 0;
+    else if (L.type === "flatten") s = null;
+    else if (L.type === "unflatten") s = L.shape;
+    else {
+      const [cA, cB, k] = L.W.shape;
+      const r = L.type === "conv"
+        ? conv2d(a, s[0], s[1], s[2], L.W, L.b, cA, k, L.stride, L.pad)
+        : convTranspose2d(a, s[0], s[1], s[2], L.W, L.b, cB, k, L.stride, L.pad);
+      a = r.out;
+      s = [L.type === "conv" ? cA : cB, r.h, r.w];
+    }
+  }
   return a;
 }
 

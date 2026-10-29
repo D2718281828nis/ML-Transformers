@@ -1,16 +1,22 @@
 """Train the small models shown on the Autoencoder Explainer page and export them to ../assets/.
 
 The models and training recipes are the ones in notebooks/autoencoders/:
-  * digits: an AE and four VAEs (beta = 0.1, 1, 2, 4) with a 2-number bottleneck (notebook 01, sections 3-6);
+  * digits: a convolutional AE and four VAEs with a 2-number bottleneck, trained on MNIST resized to 64 x 64
+    (notebook 01 builds the same ideas step by step on scikit-learn's 8 x 8 digits);
   * ETTh1:  NLinear, forecasting autoencoders with k = 1..32 and the conditional VAE (notebook 02, sections 3, 4, 8).
 
 Weights are stored as base64-encoded little-endian float32 arrays. The script also writes
 assets/checks.json with reference outputs that tools/check.mjs compares against the page's JavaScript.
 
-    python explainer/autoencoders/tools/build_assets.py      # needs torch, numpy, pandas, scikit-learn; ~2 min on a CPU
+    python explainer/autoencoders/tools/build_assets.py            # everything; needs torch, numpy, pandas
+    python explainer/autoencoders/tools/build_assets.py digits     # only the digit models (or: forecast)
+
+The digit models train on Apple's GPU (MPS) or CUDA when available: ~4 min on an M-series Mac, much longer on a CPU.
+GPU training is not bit-for-bit reproducible, so a rebuild gives slightly different (equally good) models.
 """
 
 import base64
+import gzip
 import json
 import math
 import pathlib
@@ -22,8 +28,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.datasets import load_digits
-from sklearn.model_selection import train_test_split
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
@@ -45,114 +49,162 @@ def rounded(x, nd=5):
     return round(float(x), nd)
 
 
-# ───────────────────────────── digits (notebook 01) ─────────────────────────────
-H = 128
+# ───────────────────────────── digits: MNIST at 64 x 64 ─────────────────────────────
+MNIST_URL = "https://ossci-datasets.s3.amazonaws.com/mnist/"
+SIDE = 64         # the models see 64 x 64 images: MNIST's 28 x 28, resized bilinearly (js/digits.js resizes the same way)
+N_SHOWN = 2000    # test images shipped to the page
+C, H = 8, 64      # conv channels (C, 2C, 2C, 2C) and the dense layer between the 4 x 4 feature map and the code
+BETAS = [0.1, 1.0, 16.0, 128.0]  # 128 is past the point of posterior collapse
+DEVICE = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def fetch(url, path):
+    try:
+        urllib.request.urlretrieve(url, path)
+    except urllib.error.URLError:
+        # python.org builds on macOS ship without CA certificates; certifi provides them.
+        import ssl
+        import certifi
+        with urllib.request.urlopen(url, context=ssl.create_default_context(cafile=certifi.where())) as r:
+            path.write_bytes(r.read())
+
+
+def load_mnist(split):
+    CACHE.mkdir(parents=True, exist_ok=True)
+    arrays = []
+    for kind, offset in (("images-idx3", 16), ("labels-idx1", 8)):
+        name = f"{split}-{kind}-ubyte.gz"
+        if not (CACHE / name).exists():
+            fetch(MNIST_URL + name, CACHE / name)
+        arrays.append(np.frombuffer(gzip.decompress((CACHE / name).read_bytes()), np.uint8, offset=offset))
+    return arrays[0].reshape(-1, 28, 28), arrays[1]
+
+
+def resize(x28):
+    """[n, 28, 28] in 0..1 -> [n, 1, 64, 64]"""
+    return F.interpolate(torch.as_tensor(x28, dtype=torch.float32).unsqueeze(1), size=SIDE, mode="bilinear", align_corners=False).clamp(0, 1)
+
+
+def encoder(out):
+    # 64 -> 32 -> 16 -> 8 -> 4 pixels, then dense layers down to the code
+    return nn.Sequential(
+        nn.Conv2d(1, C, 4, 2, 1), nn.ReLU(), nn.Conv2d(C, 2 * C, 4, 2, 1), nn.ReLU(),
+        nn.Conv2d(2 * C, 2 * C, 4, 2, 1), nn.ReLU(), nn.Conv2d(2 * C, 2 * C, 4, 2, 1), nn.ReLU(),
+        nn.Flatten(), nn.Linear(2 * C * 16, H), nn.ReLU(), nn.Linear(H, out))
+
+
+def decoder(k=2):
+    # the mirror image: dense layers up to a 4 x 4 feature map, then transposed convolutions back to 64 x 64 logits
+    return nn.Sequential(
+        nn.Linear(k, H), nn.ReLU(), nn.Linear(H, 2 * C * 16), nn.ReLU(), nn.Unflatten(1, (2 * C, 4, 4)),
+        nn.ConvTranspose2d(2 * C, 2 * C, 4, 2, 1), nn.ReLU(), nn.ConvTranspose2d(2 * C, 2 * C, 4, 2, 1), nn.ReLU(),
+        nn.ConvTranspose2d(2 * C, C, 4, 2, 1), nn.ReLU(), nn.ConvTranspose2d(C, 1, 4, 2, 1))
 
 
 class AE(nn.Module):
     def __init__(self, k=2):
         super().__init__()
-        self.encoder = nn.Sequential(nn.Linear(64, H), nn.ReLU(), nn.Linear(H, k))
-        self.decoder = nn.Sequential(nn.Linear(k, H), nn.ReLU(), nn.Linear(H, 64))
+        self.encoder, self.decoder = encoder(k), decoder(k)
 
-    def forward(self, x):
-        z = self.encoder(x)
-        return self.decoder(z), z
+    def encode(self, x):
+        return self.encoder(x), None
+
+    def loss(self, x):
+        return bce(self.decoder(self.encoder(x)), x), torch.zeros(())
 
 
 class VAE(nn.Module):
-    def __init__(self, k=2):
+    def __init__(self, k=2, beta=1.0):
         super().__init__()
-        self.encoder = nn.Sequential(nn.Linear(64, H), nn.ReLU(), nn.Linear(H, 2 * k))
-        self.decoder = nn.Sequential(nn.Linear(k, H), nn.ReLU(), nn.Linear(H, 64))
+        self.beta = beta
+        self.encoder, self.decoder = encoder(2 * k), decoder(k)
 
     def encode(self, x):
         return self.encoder(x).chunk(2, dim=-1)
 
-    def forward(self, x):
+    def loss(self, x):
         mu, logvar = self.encode(x)
         z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
-        return self.decoder(z), mu, logvar
+        kl = 0.5 * (mu.pow(2) + logvar.exp() - logvar - 1).sum(-1).mean()
+        return bce(self.decoder(z), x), kl
 
 
 def bce(logits, x):
-    return F.binary_cross_entropy_with_logits(logits, x, reduction="sum") / len(x)
+    # summed over the 4096 pixels, averaged over images: nats per image
+    return F.binary_cross_entropy_with_logits(logits, x, reduction="none").sum((1, 2, 3)).mean()
 
 
-def vae_terms(model, x):
-    logits, mu, logvar = model(x)
-    rec = F.binary_cross_entropy_with_logits(logits, x, reduction="none").sum(-1)
-    kl = 0.5 * (mu.pow(2) + logvar.exp() - logvar - 1).sum(-1)
-    return rec.mean(), kl.mean()
-
-
-def fit_digits(model, loss_fn, Xtr, Xte, epochs=300, lr=2e-3, bs=128, seed=0):
-    # Same loop as notebook 01, including the per-epoch evaluation (it draws VAE noise too).
-    g = torch.Generator().manual_seed(seed)
+def fit_digits(model, Xtr, epochs=15, lr=2e-3, bs=256, seed=0):
+    torch.manual_seed(seed)
+    model.to(DEVICE).train()
+    Xtr = Xtr.to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs)
+    beta = getattr(model, "beta", 0.0)
     for _ in range(epochs):
-        model.train()
-        perm = torch.randperm(len(Xtr), generator=g)
+        perm = torch.randperm(len(Xtr), device=DEVICE)
         for i in range(0, len(perm), bs):
-            loss = loss_fn(model, Xtr[perm[i:i + bs]])
+            rec, kl = model.loss(Xtr[perm[i:i + bs]])
             opt.zero_grad()
-            loss.backward()
+            (rec + beta * kl).backward()
             opt.step()
-        model.eval()
-        with torch.no_grad():
-            loss_fn(model, Xtr), loss_fn(model, Xte)
-    return model.eval()
+        sched.step()
+    return model.cpu().eval()
 
 
-def mlp_layers(seq):
-    lin = [m for m in seq if isinstance(m, nn.Linear)]
-    return [{"w": tensor(m.weight), "b": tensor(m.bias)} for m in lin]
+def seq_layers(seq):
+    out = []
+    for m in seq:
+        if isinstance(m, nn.Linear):
+            out.append({"type": "linear", "w": tensor(m.weight), "b": tensor(m.bias)})
+        elif isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+            out.append({"type": "conv" if isinstance(m, nn.Conv2d) else "convT", "w": tensor(m.weight), "b": tensor(m.bias),
+                        "stride": m.stride[0], "pad": m.padding[0]})
+        elif isinstance(m, nn.ReLU):
+            out.append({"type": "relu"})
+        elif isinstance(m, nn.Flatten):
+            out.append({"type": "flatten"})
+        elif isinstance(m, nn.Unflatten):
+            out.append({"type": "unflatten", "shape": list(m.unflattened_size)})
+        else:
+            raise TypeError(m)
+    return out
 
 
 def build_digits(checks):
-    digits = load_digits()
-    X = (digits.data / 16.0).astype(np.float32)
-    y = digits.target
-    idx = np.arange(len(X))
-    i_tr, i_te = train_test_split(idx, test_size=0.2, random_state=0, stratify=y)
-    Xtr, Xte, Xall = torch.from_numpy(X[i_tr]), torch.from_numpy(X[i_te]), torch.from_numpy(X)
-    is_test = np.zeros(len(X), dtype=int)
-    is_test[i_te] = 1
+    x_tr, _ = load_mnist("train")
+    x_te, y_te = load_mnist("t10k")
+    Xtr, Xte = resize(x_tr / 255.0), resize(x_te / 255.0)
+    # The page gets the first N_SHOWN test images at 28 x 28 in 17 levels (one character each) and resizes them itself,
+    # so the codes shipped with each model are computed from exactly those images.
+    q = np.rint(x_te[:N_SHOWN] / 255.0 * 16).astype(int)
+    Xshown = resize(q / 16.0)
 
+    candidates = [("ae", AE())] + [(f"vae-{b:g}", VAE(beta=b)) for b in BETAS]
     models = {}
-    torch.manual_seed(0)
-    ae = fit_digits(AE(2), lambda m, x: bce(m(x)[0], x), Xtr, Xte)
-    with torch.no_grad():
-        logits, _ = ae(Xte)
-        models["ae"] = {"kind": "ae", "beta": 0, "encoder": mlp_layers(ae.encoder), "decoder": mlp_layers(ae.decoder),
-                        "metrics": {"rec": rounded(bce(logits, Xte)), "kl": 0,
-                                    "mse": rounded(F.mse_loss(torch.sigmoid(logits), Xte))}}
-        checks["digits"] = {"ae": {"z": ae.encoder(Xall[:5]).tolist(),
-                                   "decode": torch.sigmoid(ae.decoder(torch.tensor([[1.5, -2.0], [8.0, 3.0]]))).tolist()}}
-    for beta in [0.1, 1.0, 2.0, 4.0]:
-        torch.manual_seed(0)
-        vae = fit_digits(VAE(2), lambda m, x, b=beta: sum(t * w for t, w in zip(vae_terms(m, x), (1.0, b))), Xtr, Xte)
+    checks["digits"] = {}
+    for key, model in candidates:
+        model = fit_digits(model, Xtr)
         with torch.no_grad():
             torch.manual_seed(0)
-            rec, kl = vae_terms(vae, Xte)
-            mu, logvar = vae.encode(Xte)
-            mse = F.mse_loss(torch.sigmoid(vae.decoder(mu)), Xte)
-            key = f"vae-{beta:g}"
-            models[key] = {"kind": "vae", "beta": beta, "encoder": mlp_layers(vae.encoder), "decoder": mlp_layers(vae.decoder),
+            parts = [(*model.loss(x), F.mse_loss(torch.sigmoid(model.decoder(model.encode(x)[0])), x)) for x in Xte.split(1000)]
+            rec, kl, mse = (sum(p[j] for p in parts) / len(parts) for j in range(3))
+            mu, logvar = model.encode(Xshown)
+            probe = torch.tensor([[0.5, -1.0], [-1.5, 1.2]])
+            models[key] = {"kind": "vae" if logvar is not None else "ae", "beta": getattr(model, "beta", 0),
+                           "encoder": seq_layers(model.encoder), "decoder": seq_layers(model.decoder),
+                           "codes": tensor(mu), "logvar": tensor(logvar) if logvar is not None else None,
                            "metrics": {"rec": rounded(rec), "kl": rounded(kl), "mse": rounded(mse)}}
-            mu5, lv5 = vae.encode(Xall[:5])
-            checks["digits"][key] = {"mu": mu5.tolist(), "logvar": lv5.tolist(),
-                                     "decode": torch.sigmoid(vae.decoder(torch.tensor([[0.5, -1.0], [-1.5, 1.2]]))).tolist()}
-        print(f"digits {key}: rec {rec:.2f} KL {kl:.2f} mse {mse:.4f}")
+            checks["digits"][key] = {"mu": mu[:5].tolist(), "logvar": logvar[:5].tolist() if logvar is not None else None,
+                                     "decode": torch.sigmoid(model.decoder(probe)).flatten(1).tolist()}
+        print(f"digits {key}: rec {rec:.1f} KL {kl:.2f} mse {mse:.4f}")
 
-    # 64 pixels per image in 0..16, one character each (0-9, a-g)
     alphabet = "0123456789abcdefg"
-    images = "".join(alphabet[v] for v in digits.data.astype(int).ravel())
     (ASSETS / "digits.json").write_text(json.dumps({
-        "source": "scikit-learn load_digits (UCI optical recognition of handwritten digits), 8x8, values 0..16",
-        "n": int(len(X)), "images": images, "labels": "".join(map(str, y)), "test": "".join(map(str, is_test)),
+        "source": "MNIST test set (LeCun, Cortes & Burges), first 2000 images, 28x28 in 17 levels (0..g); the page resizes them to 64x64",
+        "n": N_SHOWN, "side": 28, "images": "".join(alphabet[v] for v in q.ravel()), "labels": "".join(map(str, y_te[:N_SHOWN])),
     }, separators=(",", ":")))
-    (ASSETS / "digit-models.json").write_text(json.dumps({"hidden": H, "latent": 2, "models": models}, separators=(",", ":")))
+    (ASSETS / "digit-models.json").write_text(json.dumps({"side": SIDE, "latent": 2, "models": models}, separators=(",", ":")))
 
 
 # ───────────────────────────── ETTh1 (notebook 02) ─────────────────────────────
@@ -164,14 +216,7 @@ def load_series():
     CACHE.mkdir(parents=True, exist_ok=True)
     csv = CACHE / "ETTh1.csv"
     if not csv.exists():
-        try:
-            urllib.request.urlretrieve(ETT_URL, csv)
-        except urllib.error.URLError:
-            # python.org builds on macOS ship without CA certificates; certifi provides them.
-            import ssl
-            import certifi
-            with urllib.request.urlopen(ETT_URL, context=ssl.create_default_context(cafile=certifi.where())) as r:
-                csv.write_bytes(r.read())
+        fetch(ETT_URL, csv)
     df = pd.read_csv(csv, parse_dates=["date"])
     raw = df.iloc[:, 1:].to_numpy(np.float32)
     mean, std = raw[:12 * MONTH].mean(0), raw[:12 * MONTH].std(0)
@@ -390,10 +435,15 @@ def out_check(cls, entry, probe):
 
 
 if __name__ == "__main__":
+    import sys
+    parts = sys.argv[1:] or ["digits", "forecast"]
     ASSETS.mkdir(exist_ok=True)
-    checks = {}
-    build_digits(checks)
-    build_forecast(checks)
-    (ASSETS / "checks.json").write_text(json.dumps(checks))
+    checks_file = ASSETS / "checks.json"
+    checks = json.loads(checks_file.read_text()) if checks_file.exists() else {}
+    if "digits" in parts:
+        build_digits(checks)
+    if "forecast" in parts:
+        build_forecast(checks)
+    checks_file.write_text(json.dumps(checks))
     for p in sorted(ASSETS.glob("*.json")):
         print(f"{p.name:22s} {p.stat().st_size / 1024:7.1f} KB")

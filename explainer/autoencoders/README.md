@@ -3,7 +3,7 @@
 An interactive page about autoencoders and how they apply to time-series forecasting:
 
 1. **Autoencoders.** 2-D points squeezed through a one-number bottleneck, trained live in the browser. A linear AE settles on the PCA line; a nonlinear one bends its curve to follow an arc.
-2. **Digits.** An AE with a 2-number code on scikit-learn's 8×8 digits: a latent map with decode-on-hover, a drawing pad that encodes your digit, the decoder's map, and how unevenly the digits share the code space.
+2. **Digits.** An AE with a 2-number code on scikit-learn's 8×8 digits: a latent map with decode-on-hover, a 64×64 drawing pad that is averaged down to the 8×8 input and encoded as you draw, the decoder's map, and how unevenly the digits share the code space.
 3. **Variational autoencoders.** The ELBO, an interactive KL term, the reparameterization trick (sample ε and decode), a code space you can sample, the β knob down to posterior collapse, and interpolation.
 4. **The paper.** [*Are Transformers Effective for Time Series Forecasting?*](https://arxiv.org/abs/2205.13504) (Zeng et al., AAAI 2023): LTSF-Linear, an explorable copy of Table 2, and NLinear's weight matrix on ETTh1.
 5. **An autoencoder that forecasts.** NLinear's map factored as W = D·E. A bottleneck of 8 numbers matches the full matrix. The section takes a real ETTh1 forecast apart into decoder curves, repeats the paper's input-shuffling test, and has a lab where you design a synthetic series and train a forecasting AE live.

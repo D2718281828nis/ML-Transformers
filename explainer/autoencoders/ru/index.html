@@ -119,10 +119,12 @@
     <span class="stage-num">2</span>
     <div>
       <h2>Автоэнкодер для рукописных цифр</h2>
-      <p>Теперь настоящие данные: 1797 рукописных цифр размером 8 × 8 пикселей (<code>digits</code> из scikit-learn). Энкодер (64 → 128 → 2) сжимает
-        каждое изображение в <b>два</b> числа, так что каждая картинка становится точкой на плоскости, которую можно рассмотреть. Декодер (2 → 128 → 64) превращает
-        любую точку этой плоскости обратно в изображение. Сети обучены в <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/01_autoencoders_and_vae.ipynb" target="_blank" rel="noopener">ноутбуке 01</a>
-        и выполняются здесь.</p>
+      <p>Теперь настоящие данные: рукописные цифры из MNIST, увеличенные с 28 × 28 до 64 × 64 пикселей. Энкодер сжимает каждое изображение в <b>два</b> числа,
+        так что каждая картинка становится точкой на плоскости, которую можно рассмотреть. Четыре свёртки четыре раза уменьшают изображение вдвое
+        (64 → 32 → 16 → 8 → 4 пикселя), затем два полносвязных слоя сводят карту признаков 4 × 4 к коду. Декодер устроен зеркально и превращает любую точку
+        этой плоскости обратно в изображение. Сети обучены на 60 000 обучающих изображений MNIST скриптом <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/explainer/autoencoders/tools/build_assets.py" target="_blank" rel="noopener"><code>build_assets.py</code></a>
+        и выполняются здесь; на картах — 2000 тестовых изображений. <a href="https://github.com/D2718281828nis/ML-Transformers/blob/main/notebooks/autoencoders/01_autoencoders_and_vae.ipynb" target="_blank" rel="noopener">Ноутбук 01</a> шаг за шагом строит те же модели
+        на меньших цифрах 8 × 8 из scikit-learn.</p>
     </div>
   </header>
 
@@ -136,8 +138,10 @@
 
   <article class="step" id="dg-draw">
     <h3><span class="step-num">2.2</span> Нарисуйте цифру</h3>
-    <p>Рисуйте на сетке 8 × 8 или начните с настоящей тестовой цифры и измените её. Рисунок кодируется после каждого штриха. Посмотрите, куда он попадает
-      и сколько от него остаётся после горлышка из двух чисел.</p>
+    <p>Рисуйте на холсте 64 × 64 или начните с настоящей тестовой цифры и измените её. Рисунок кодируется после каждого штриха. Посмотрите, куда он попадает
+      и сколько от него остаётся после горлышка из двух чисел. Цифры MNIST вписаны в квадрат 20 × 20 и отцентрированы по центру масс, так что энкодер
+      видел цифры только одного размера и в одном месте. Страница сначала так же обрабатывает ваш рисунок. Отключите это и нарисуйте маленькую цифру
+      в углу: энкодер её больше не узнаёт.</p>
     <div class="viz" id="viz-dg-draw"></div>
   </article>
 
@@ -167,7 +171,7 @@
   <article class="step" id="vae-elbo">
     <h3><span class="step-num">3.1</span> Цель: хорошо восстанавливать и держаться рядом с априорным распределением</h3>
     <p><b>Порождающая история.</b> Сначала код, потом изображение:</p>
-    <div class="formula"><span class="tex" data-tex="z \sim p(z) = \mathcal N(0, I), \qquad x \sim p_\theta(x \mid z) = \textstyle\prod_{j=1}^{64} \mathrm{Bernoulli}\big(x_j;\ \sigma(g_\theta(z))_j\big)">z ~ N(0, I), x ~ p(x | z)</span></div>
+    <div class="formula"><span class="tex" data-tex="z \sim p(z) = \mathcal N(0, I), \qquad x \sim p_\theta(x \mid z) = \textstyle\prod_{j=1}^{4096} \mathrm{Bernoulli}\big(x_j;\ \sigma(g_\theta(z))_j\big)">z ~ N(0, I), x ~ p(x | z)</span></div>
     <p>Подогнать модель значит максимизировать <span class="tex" data-tex="\log p_\theta(x) = \log\int p_\theta(x\mid z)\,p(z)\,dz">log p(x)</span> — интеграл по всем возможным кодам.
       Энкодер подсказывает, где искать: <span class="tex" data-tex="q_\phi(z\mid x) = \mathcal N\big(\mu_\phi(x), \operatorname{diag}\sigma^2_\phi(x)\big)">q(z | x) = N(μ, σ²)</span>.
       Для любого такого <span class="tex" data-tex="q">q</span> логарифм правдоподобия ограничен снизу величиной <b>ELBO</b> (вариационная нижняя граница), а функция потерь —
