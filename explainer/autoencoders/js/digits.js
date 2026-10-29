@@ -828,7 +828,8 @@ function vaeMapSection(D, root) {
 
 // 3.4
 function betaSection(D, root) {
-  const keys = ["vae-0.1", "vae-1", "vae-2", "vae-4"];
+  // every VAE in digit-models.json, in order of β (build_assets.py decides which β values exist)
+  const keys = Object.keys(D.models).filter((k) => D.models[k].kind === "vae").sort((a, b) => D.models[a].beta - D.models[b].beta);
   const st = { key: "vae-1" };
   const fixedZ = (() => {
     const r = rng(5);
